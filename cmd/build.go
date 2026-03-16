@@ -1,11 +1,13 @@
 package cmd
 
 import (
+	"io"
 	"log"
 	"os"
 	"path/filepath"
 	"sync"
 
+	"github.com/bytedance/sonic"
 	"github.com/klauspost/compress/zstd"
 	"github.com/spf13/cobra"
 )
@@ -48,6 +50,11 @@ type ClassRecord struct {
 	EquivalentIdentifiers []string `json:"equivalent_identifiers"`
 }
 
+var badTokens = [2]string{
+	"uncharacterized protein",
+	"hypothetical protein",
+}
+
 func parseClassFile(fileName string, cl *ClassLookup, wg *sync.WaitGroup) {
 	f, err := os.Open(fileName)
 	if err != nil {
@@ -60,6 +67,23 @@ func parseClassFile(fileName string, cl *ClassLookup, wg *sync.WaitGroup) {
 	}
 
 	decoder := sonic.ConfigDefault.NewDecoder(zr)
+	for {
+		cr := ClassRecord{}
+		err := decoder.Decode(&cr)
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			throwError(5, err)
+		}
+
+		ids := cr.EquivalentIdentifiers
+		if len(ids) == 0 {
+			continue
+		}
+
+		curie, aliases := ids[0], ids[1:]
+
+	}
 
 	f.Close()
 	zr.Close()
