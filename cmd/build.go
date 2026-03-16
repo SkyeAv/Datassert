@@ -1,20 +1,41 @@
 package cmd
 
 import (
+	"log"
+	"path/filepath"
 	"sync"
 
 	"github.com/spf13/cobra"
 )
 
-type ClassData struct {
+func throwError(code uint8, err error) {
+	log.Fatal("%d | ERROR | %v", code, err)
+}
+
+func globFileNames(dir string) []string {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		throwError(1, err)
+	}
+
+	pattern := filepath.Join(abs, "*Class.ndjson.zst")
+	fileNames, err := filepath.Glob(pattern)
+	if err != nil {
+		throwError(2, err)
+	}
+
+	return fileNames
+}
+
+type ClassLookup struct {
 	mu   sync.Mutex
 	data map[string][]string
 }
 
-func (cd *ClassData) Set(key string, value []string) {
-	cd.mu.Lock()
-	cd.data[key] = value
-	cd.mu.Unlock()
+func (cl *ClassLookup) Set(key string, value []string) {
+	cl.mu.Lock()
+	cl.data[key] = value
+	cl.mu.Unlock()
 }
 
 func build(cmd *cobra.Command, args []string) {
