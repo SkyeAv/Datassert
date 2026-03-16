@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/bytedance/sonic"
@@ -55,6 +56,42 @@ var badTokens = [2]string{
 	"hypothetical protein",
 }
 
+func isBadToken(token string) bool {
+	if token == "" {
+		return true
+	}
+
+	if strings.Contains(token, "INCHIKEY") {
+		return true
+	}
+
+	for _, badToken := range badTokens {
+		if token == badToken {
+			return true
+		}
+	}
+
+	return false
+}
+
+func cleanToken(token string) string {
+	token = strings.TrimSpace(token)
+	for len(token) >= 2 {
+		wrapped := token[0] == token[len(token)-1] && (token[0] == '\'' || token[0] == '"')
+		doublePrefix := token[:2] == "''" || token[:2] == `""`
+
+		if wrapped {
+			token = strings.TrimSpace(token[1 : len(token)-1])
+		} else if doublePrefix {
+			token = strings.TrimSpace(token[2:])
+		} else {
+			break
+		}
+	}
+
+	return token
+}
+
 func parseClassFile(fileName string, cl *ClassLookup, wg *sync.WaitGroup) {
 	f, err := os.Open(fileName)
 	if err != nil {
@@ -82,6 +119,9 @@ func parseClassFile(fileName string, cl *ClassLookup, wg *sync.WaitGroup) {
 		}
 
 		curie, aliases := ids[0], ids[1:]
+		if isBadToken(curie) {
+			continue
+		}
 
 	}
 
