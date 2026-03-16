@@ -4,8 +4,8 @@ import "github.com/spf13/cobra"
 
 var rootCmd = &cobra.Command{
 	Use:   "datassert",
-	Short: "golang",
-	Long:  "golang",
+	Short: "Placeholder",
+	Long:  "Placeholder",
 }
 
 func Execute() {
