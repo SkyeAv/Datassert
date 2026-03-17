@@ -46,6 +46,11 @@ func (cl *ClassLookup) Set(key string, value []string) {
 	cl.data[key] = value
 }
 
+func (cl *ClassLookup) Get(key string) ([]string, bool) {
+	val, ok := cl.data[key]
+	return val, ok
+}
+
 type ClassRecord struct {
 	EquivalentIdentifiers []string `json:"equivalent_identifiers"`
 }
@@ -176,7 +181,7 @@ func (cm *CategoryMap) GetOrAdd(category string) uint32 {
 	if val, ok := cm.m.Load(category); ok {
 		return val.(uint32)
 	}
-	actual, _ := cm.m.LoadOrStore(category, c.counter.Add(1))
+	actual, _ := cm.m.LoadOrStore(category, cm.counter.Add(1))
 	return actual.(uint32)
 }
 
@@ -212,7 +217,7 @@ func parseSynonymFile(fileName string, cl *ClassLookup, cm *CategoryMap, wg *syn
 
 		synonyms := sr.Synonyms
 		synonyms = append(synonyms, curie)
-		cleaned = cleanAliases(synonyms)
+		cleaned := cleanAliases(synonyms)
 
 		if aliases, ok := cl.Get(curie); ok {
 			cleaned = append(cleaned, aliases...)
