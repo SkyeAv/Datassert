@@ -63,7 +63,7 @@ func isBadToken(token string) bool {
 		return true
 	}
 
-	if strings.Contains(token, "inchikey") {
+	if strings.Contains(token, "INCHIKEY") || strings.Contains(token, "inchikey") {
 		return true
 	}
 
