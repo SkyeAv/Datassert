@@ -141,6 +141,8 @@ func parseClassFile(fileName string, cl *ClassLookup, wg *sync.WaitGroup) {
 			continue
 		}
 
+		aliases = cleanAliases(aliases)
+		cl.Set(curie, aliases)
 	}
 
 	f.Close()
