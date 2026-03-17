@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -188,18 +189,6 @@ func (cm *CategoryMap) GetOrAdd(category string) uint32 {
 	return actual.(uint32)
 }
 
-type SourcesTable struct {
-	SourceID      uint8  `paruquet:"SOURCE_ID"`
-	SourceName    string `paruquet:"SOURCE_NAME"`
-	SourceVersion string `paruquet:"SOURCE_VERSION"`
-	NLPLevel      uint8  `paruquet:"NLP_LEVEL"`
-}
-
-type CategoriesTable struct {
-	CategoryID uint32 `paruquet:"CATEGORY_ID"`
-	Category   string `paruquet:"CATEGORY"`
-}
-
 type SynonymsTable struct {
 	CurieID  uint32 `paruquet:"CURIE_ID"`
 	SourceID uint8  `paruquet:"SOURCE_ID"`
@@ -213,6 +202,8 @@ type CuriesTable struct {
 	CategoryID    uint32 `paruquet:"CATEGORY_ID"`
 	Taxon         uint32 `paruquet:"TAXON,optional"`
 }
+
+var l1Regex = regexp.MustCompile(`\W+`)
 
 func parseSynonymFile(fileName string, cl *ClassLookup, cm *CategoryMap, wg *sync.WaitGroup) {
 	defer wg.Done()
@@ -228,6 +219,9 @@ func parseSynonymFile(fileName string, cl *ClassLookup, cm *CategoryMap, wg *syn
 		throwError(7, err)
 	}
 	defer zr.Close()
+
+	syt := []SynonymsTable{}
+	cut := []CuriesTable{}
 
 	decoder := sonic.ConfigDefault.NewDecoder(zr)
 	for {
@@ -252,6 +246,12 @@ func parseSynonymFile(fileName string, cl *ClassLookup, cm *CategoryMap, wg *syn
 			cleaned = append(cleaned, aliases...)
 		}
 
+		l0Synonyms := slices.Compact(cleaned)
+		l1Synonyms := []string{}
+		for _, synonym := range l0Synonyms {
+			l1Synonyms = append(l1Synonyms, l1Regex.ReplaceAllString(synonym, ""))
+		}
+
 		preferred := sr.PreferredName
 		preferred = cleanToken(preferred)
 
@@ -265,7 +265,30 @@ func parseSynonymFile(fileName string, cl *ClassLookup, cm *CategoryMap, wg *syn
 			taxon, _ = strconv.Atoi(s)
 		}
 
+		taxonID := uint32(taxon)
+		cut = append(cut, CuriesTable{Curie: curie, PreferredName: preferred, CategoryID: categoryID, Taxon: taxonID})
+
+		newSynonyms := []SynonymsTable{}
+		for _, synonym := range l0Synonyms {
+			newSynonyms = append(newSynonyms, SynonymsTable{Synonym: synonym, SourceID: 0})
+		}
+		for _, synonym := range l1Synonyms {
+			newSynonyms = append(newSynonyms, SynonymsTable{Synonym: synonym, SourceID: 1})
+		}
+		syt = append(syt, newSynonyms...)
 	}
+}
+
+type SourcesTable struct {
+	SourceID      uint8  `paruquet:"SOURCE_ID"`
+	SourceName    string `paruquet:"SOURCE_NAME"`
+	SourceVersion string `paruquet:"SOURCE_VERSION"`
+	NLPLevel      uint8  `paruquet:"NLP_LEVEL"`
+}
+
+type CategoriesTable struct {
+	CategoryID uint32 `paruquet:"CATEGORY_ID"`
+	Category   string `paruquet:"CATEGORY"`
 }
 
 func buildSynonymParquets(fileNames []string, cl *ClassLookup) {
