@@ -170,6 +170,7 @@ type SynonymRecord struct {
 	Synonyms      []string `json:"names"`
 	PreferredName string   `json:"preferred_name"`
 	Categories    []string `json:"categories"`
+	Taxon         []any    `json:"taxa"`
 }
 
 type CategoryMap struct {
@@ -183,6 +184,27 @@ func (cm *CategoryMap) GetOrAdd(category string) uint32 {
 	}
 	actual, _ := cm.m.LoadOrStore(category, cm.counter.Add(1))
 	return actual.(uint32)
+}
+
+type SourcesTable struct {
+	SourceID      uint8  `paruquet:"SOURCE_ID"`
+	SourceName    string `paruquet:"SOURCE_NAME"`
+	SourceVersion string `paruquet:"SOURCE_VERSION"`
+	NLPLevel      uint8  `paruquet:"NLP_LEVEL"`
+}
+
+type SynonymsTable struct {
+	CurieID  uint32 `paruquet:"CURIE_ID"`
+	SourceID uint8  `paruquet:"SOURCE_ID"`
+	Synonym  string `paruquet:"SYNONYM"`
+}
+
+type CuriesTable struct {
+	CurieID       uint32 `paruquet:"CURIE_ID"`
+	Curie         string `paruquet:"CURIE"`
+	PreferredName string `paruquet:"PREFERRED_NAME"`
+	CategoryID    uint32 `paruquet:"CATEGORY_ID"`
+	Taxon         uint32 `paruquet:"TAXON,optional"`
 }
 
 func parseSynonymFile(fileName string, cl *ClassLookup, cm *CategoryMap, wg *sync.WaitGroup) {
@@ -227,6 +249,7 @@ func parseSynonymFile(fileName string, cl *ClassLookup, cm *CategoryMap, wg *syn
 		preferred = cleanToken(preferred)
 
 		category := sr.Categories[0]
+		categoryID := cm.GetOrAdd(category)
 	}
 }
 
