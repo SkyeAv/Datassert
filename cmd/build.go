@@ -3,8 +3,10 @@ package cmd
 import (
 	"io"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 
@@ -61,7 +63,7 @@ func isBadToken(token string) bool {
 		return true
 	}
 
-	if strings.Contains(token, "INCHIKEY") {
+	if strings.Contains(token, "inchikey") {
 		return true
 	}
 
@@ -90,6 +92,22 @@ func cleanToken(token string) string {
 	}
 
 	return token
+}
+
+func cleanAliases(aliases []string) []string {
+	seen := make(map[string]struct{})
+
+	for _, a := range aliases {
+		c := strings.ToLower(a)
+		c = cleanToken(c)
+
+		if !isBadToken(c) {
+			seen[c] = struct{}{}
+		}
+	}
+
+	out := maps.Keys(seen)
+	return slices.Collect(out)
 }
 
 func parseClassFile(fileName string, cl *ClassLookup, wg *sync.WaitGroup) {
