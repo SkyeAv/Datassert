@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"github.com/bytedance/sonic"
 	"github.com/klauspost/compress/zstd"
@@ -159,7 +160,27 @@ func buildClassLookup(fileNames []string) *ClassLookup {
 	return cl
 }
 
-func parseSynonymFile(fileName string, cl *ClassLookup, cg *sync.Map, wg *sync.WaitGroup) {
+type SynonymRecord struct {
+	Curie         string   `json:"curie"`
+	Synonyms      []string `json:"names"`
+	PreferredName string   `json:"preferred_name"`
+	Categories    []string `json:"categories"`
+}
+
+type CategoryMap struct {
+	m       sync.Map
+	counter atomic.Uint32
+}
+
+func (cm *CategoryMap) GetOrAdd(category string) uint32 {
+	if val, ok := cm.m.Load(category); ok {
+		return val.(uint32)
+	}
+	actual, _ := cm.m.LoadOrStore(category, c.counter.Add(1))
+	return actual.(uint32)
+}
+
+func parseSynonymFile(fileName string, cl *ClassLookup, cm *CategoryMap, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	f, err := os.Open(fileName)
@@ -173,15 +194,44 @@ func parseSynonymFile(fileName string, cl *ClassLookup, cg *sync.Map, wg *sync.W
 		throwError(7, err)
 	}
 	defer zr.Close()
+
+	decoder := sonic.ConfigDefault.NewDecoder(zr)
+	for {
+		sr := SynonymRecord{}
+		err := decoder.Decode(&sr)
+		if err == io.EOF {
+			break
+		} else if err != nil {
+			throwError(8, err)
+		}
+
+		curie := sr.Curie
+		if isBadToken(curie) {
+			continue
+		}
+
+		synonyms := sr.Synonyms
+		synonyms = append(synonyms, curie)
+		cleaned = cleanAliases(synonyms)
+
+		if aliases, ok := cl.Get(curie); ok {
+			cleaned = append(cleaned, aliases...)
+		}
+
+		preferred := sr.PreferredName
+		preferred = cleanToken(preferred)
+
+		category := sr.Categories[0]
+	}
 }
 
 func buildSynonymParquets(fileNames []string, cl *ClassLookup) {
 	wg := sync.WaitGroup{}
-	cg := sync.Map{}
+	cm := CategoryMap{}
 
 	for _, fileName := range fileNames {
 		wg.Add(1)
-		go parseSynonymFile(fileName, cl, &cg, &wg)
+		go parseSynonymFile(fileName, cl, &cm, &wg)
 	}
 }
 
