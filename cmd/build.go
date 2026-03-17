@@ -20,7 +20,7 @@ import (
 )
 
 func throwError(code uint8, err error) {
-	log.Fatal("%d | ERROR | %v", code, err)
+	log.Fatalf("%d | ERROR | %v", code, err)
 }
 
 func globFileNames(dir string, suffix string) []string {
