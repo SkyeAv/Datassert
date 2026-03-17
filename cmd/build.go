@@ -45,8 +45,8 @@ func NewClassLookup() *ClassLookup {
 
 func (cl *ClassLookup) Set(key string, value []string) {
 	cl.mu.Lock()
+	defer cl.mu.Unlock()
 	cl.data[key] = value
-	cl.mu.Unlock()
 }
 
 type ClassRecord struct {
@@ -111,15 +111,19 @@ func cleanAliases(aliases []string) []string {
 }
 
 func parseClassFile(fileName string, cl *ClassLookup, wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	f, err := os.Open(fileName)
 	if err != nil {
 		throwError(3, err)
 	}
+	defer f.Close()
 
 	zr, err := zstd.NewReader(f)
 	if err != nil {
 		throwError(4, err)
 	}
+	defer zr.Close()
 
 	decoder := sonic.ConfigDefault.NewDecoder(zr)
 	for {
@@ -144,10 +148,6 @@ func parseClassFile(fileName string, cl *ClassLookup, wg *sync.WaitGroup) {
 		aliases = cleanAliases(aliases)
 		cl.Set(curie, aliases)
 	}
-
-	f.Close()
-	zr.Close()
-	wg.Done()
 }
 
 func buildClassLookup(fileNames []string) *ClassLookup {
