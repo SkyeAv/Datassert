@@ -1,4 +1,4 @@
-module github.com/SkyeAv/Datassert
+module github.com/SkyeAv/datassert
 
 go 1.25.7
 
