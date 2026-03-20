@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"database/sql"
 	"fmt"
 	"io"
 	"log"
@@ -15,6 +16,7 @@ import (
 	"sync/atomic"
 
 	"github.com/bytedance/sonic"
+	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/klauspost/compress/zstd"
 	"github.com/parquet-go/parquet-go"
 	"github.com/spf13/cobra"
@@ -57,12 +59,12 @@ func (cl *ClassLookup) Get(key string) ([]string, bool) {
 	return val, ok
 }
 
-var badPrefixes [2]string = [2]string{
+var badPrefixes []string = []string{
 	"INCHIKEY",
 	"inchikey",
 }
 
-var badTokens [3]string = [3]string{
+var badTokens []string = []string{
 	"uncharacterized protein",
 	"uncharacterized gene",
 	"hypothetical protein",
@@ -194,7 +196,7 @@ type SynonymRecord struct {
 
 type CategoriesTable struct {
 	CategoryID uint32 `parquet:"CATEGORY_ID"`
-	Category   string `parquet:"CATEGORY"`
+	Category   string `parquet:"CATEGORY_NAME"`
 }
 
 type CategoryMap struct {
@@ -236,7 +238,7 @@ type CuriesTable struct {
 	Curie         string `parquet:"CURIE"`
 	PreferredName string `parquet:"PREFERRED_NAME"`
 	CategoryID    uint32 `parquet:"CATEGORY_ID"`
-	Taxon         uint32 `parquet:"TAXON,optional"`
+	Taxon         uint32 `parquet:"TAXON_ID,optional"`
 }
 
 type SourcesTable struct {
@@ -255,13 +257,13 @@ func writeParquet[T ParquetTable](filePath string, table []T) {
 	checkError(7, err)
 }
 
-var baseDir string = "./.parquet-store/"
+var parquetBaseDir string = "./.parquet-store/"
 
 func makeParquetName(fileName string, thing string, num int) string {
 	base := filepath.Base(fileName)
 	stem := strings.TrimSuffix(base, "Synonyms.ndjson.zst")
 
-	return fmt.Sprintf("%v%v%v-%d", baseDir, stem, thing, num)
+	return fmt.Sprintf("%v%v%v-%d.parquet", parquetBaseDir, stem, thing, num)
 }
 
 func writeIfGeLen[T ParquetTable](fileName string, thing string, num int, table []T, batchSize int) (int, []T) {
@@ -327,6 +329,7 @@ func parseSynonymFile(fileName string, batchSize int, cl *ClassLookup, cm *Categ
 			cleaned = append(cleaned, aliases...)
 		}
 
+		slices.Sort(cleaned)
 		l0Synonyms := slices.Compact(cleaned)
 		l0Set := map[string]struct{}{}
 		for _, synonym := range l0Synonyms {
@@ -424,16 +427,80 @@ func buildSynonymParquets(fileNames []string, cl *ClassLookup, batchSize int) {
 	}
 	wg.Wait()
 
-	categoryParquet := makeParquetName("Biolink", "Categories", 1)
+	categoryParquet := makeParquetName("BiolinkSynonyms.njson.zst", "Categories", 1)
 	writeParquet(categoryParquet, cm.ToTable())
 
-	sourceParquet := makeParquetName("BABEL", "Sources", 1)
+	sourceParquet := makeParquetName("BabelSynonyms.ndjson.zst", "Sources", 1)
 	writeParquet(sourceParquet, sources)
+}
+
+func getDB(dbPath string) *sql.DB {
+	dbPath, err := filepath.Abs(dbPath)
+	checkError(6, err)
+
+	db, err := sql.Open("duckdb", dbPath)
+	checkError(10, err)
+	return db
+}
+
+var tableSchemas []string = []string{
+	"CREATE TABLE IF NOT EXISTS SOURCES (SOURCE_ID INTEGER PRIMARY KEY, SOURCE_NAME VARCHAR, SOURCE_VERSION VARCHAR, NLP_LEVEL INTEGER);",
+	"CREATE TABLE IF NOT EXISTS CATEGORIES (CATEGORY_ID INTEGER PRIMARY KEY, CATEGORY_NAME VARCHAR);",
+	"CREATE TABLE IF NOT EXISTS CURIES (CURIE_ID INTEGER PRIMARY KEY, CURIE VARCHAR, PREFERRED_NAME VARCHAR, CATEGORY_ID INTEGER, TAXON_ID INTEGER);",
+	"CREATE TABLE IF NOT EXISTS SYNONYMS (CURIE_ID INTEGER, SOURCE_ID INTEGER, SYNONYM VARCHAR);",
+	"CREATE TABLE IF NOT EXISTS SYNONYMS_SORTED (CURIE_ID INTEGER, SOURCE_ID INTEGER, SYNONYM VARCHAR);",
+}
+
+var dbConfiguration []string = []string{
+	fmt.Sprintf("SET temp_directory = '%v'", os.TempDir()),
+	"SET preserve_insertion_order = false;",
+}
+
+var indexOps []string = []string{
+	"INSERT INTO SYNONYMS_SORTED SELECT * FROM SYNONYMS ORDER BY SYNONYM;",
+	"DROP TABLE SYNONYMS;",
+	"ALTER TABLE SYNONYMS_SORTED RENAME TO SYNONYMS;",
+	"CREATE INDEX CURIE_SYNONYMS ON SYNONYMS (SYNONYM);",
+	"CREATE INDEX CATEGORY_NAMES ON CATEGORIES (CATEGORY_NAME);",
+	"CREATE INDEX CURIE_TAXON ON CURIES (TAXON_ID);",
+	"VACUUM ANALYZE;",
+}
+
+func iterExecDB(db *sql.DB, queries []string) {
+	for _, query := range queries {
+		_, err := db.Exec(query)
+		checkError(11, err)
+	}
+}
+
+func iterParquetsDB(db *sql.DB, pattern string, query string) {
+	parquets := globFileNames(parquetBaseDir, pattern)
+	for _, parquet := range parquets {
+		formatted := fmt.Sprintf(query, parquet)
+		_, err := db.Exec(formatted)
+		checkError(12, err)
+	}
+}
+
+func buildDuckDB(dbPath string) {
+	db := getDB(dbPath)
+	defer db.Close()
+
+	iterExecDB(db, tableSchemas)
+	iterExecDB(db, dbConfiguration)
+
+	iterParquetsDB(db, "*Sources*.parquet", "INSERT INTO SOURCES SELECT SOURCE_ID, SOURCE_NAME, SOURCE_VERSION, NLP_LEVEL FROM read_parquet('%v')")
+	iterParquetsDB(db, "*Categories*.parquet", "INSERT INTO CATEGORIES SELECT CATEGORY_ID, CATEGORY_NAME FROM read_parquet('%v')")
+	iterParquetsDB(db, "*Curies*.parquet", "INSERT INTO CURIES SELECT CURIE_ID, CURIE, PREFERRED_NAME, CATEGORY_ID, TAXON_ID FROM read_parquet('%v')")
+	iterParquetsDB(db, "*Synonyms*.parquet", "INSERT INTO SYNONYMS SELECT CURIE_ID, SOURCE_ID, SYNONYM FROM read_parquet('%v')")
+
+	iterExecDB(db, indexOps)
 }
 
 func build(cmd *cobra.Command, args []string) {
 	babelDir := args[0]
-	batchLen := args[1]
+	dbPath := args[1]
+	batchLen := args[2]
 
 	batchSize := stringToInt(batchLen)
 
@@ -442,17 +509,20 @@ func build(cmd *cobra.Command, args []string) {
 
 	synonymFileNames := globFileNames(babelDir, "Synonyms.ndjson.zst")
 	buildSynonymParquets(synonymFileNames, cl, batchSize)
+
+	buildDuckDB(dbPath)
 }
 
 var buildCmd = &cobra.Command{
-	Use:   "build",
+	Use:   "build [babel-dir] [db-path] [batch-len]",
 	Short: "Placeholder",
 	Long:  "Placeholder",
+	Args:  cobra.ExactArgs(3),
 	Run:   build,
 }
 
 func init() {
-	os.MkdirAll(baseDir, os.ModePerm)
+	os.MkdirAll(parquetBaseDir, os.ModePerm)
 
 	rootCmd.AddCommand(buildCmd)
 }
