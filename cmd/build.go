@@ -262,6 +262,7 @@ func makeParquetName(fileName string, thing string, num int) string {
 	ext := filepath.Ext(fileName)
 	base := filepath.Base(fileName)
 	stem := strings.TrimSuffix(base, ext)
+
 	return fmt.Sprintf("%v%v-%v-%d", baseDir, stem, thing, num)
 }
 
