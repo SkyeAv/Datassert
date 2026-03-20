@@ -4,6 +4,7 @@ go 1.25.7
 
 require (
 	github.com/bytedance/sonic v1.15.0
+	github.com/duckdb/duckdb-go/v2 v2.10500.0
 	github.com/klauspost/compress v1.18.5
 	github.com/parquet-go/parquet-go v0.29.0
 	github.com/spf13/cobra v1.10.2
@@ -21,7 +22,6 @@ require (
 	github.com/duckdb/duckdb-go-bindings/lib/linux-amd64 v0.10500.0 // indirect
 	github.com/duckdb/duckdb-go-bindings/lib/linux-arm64 v0.10500.0 // indirect
 	github.com/duckdb/duckdb-go-bindings/lib/windows-amd64 v0.10500.0 // indirect
-	github.com/duckdb/duckdb-go/v2 v2.10500.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/goccy/go-json v0.10.6 // indirect
 	github.com/google/flatbuffers v25.12.19+incompatible // indirect
