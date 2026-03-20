@@ -232,6 +232,15 @@ func writeParquet[T ParquetTable](filePath string, table []T) {
 	checkError(7, err)
 }
 
+var baseDir string = "./.parquet-store/"
+
+func makeParquetName(fileName string, thing string, num int) string {
+	base := filepath.Base(fileName)
+	stem := strings.TrimSuffix(base, "Synonyms.ndjson.zst")
+
+	return fmt.Sprintf("%v%v%v-%d", baseDir, stem, thing, num)
+}
+
 func writeIfGeLen[T ParquetTable](fileName string, thing string, num int, table []T, batchSize int) int {
 	if len(table) >= batchSize {
 		parquetName := makeParquetName(fileName, thing, num)
@@ -255,16 +264,6 @@ type CurieCounter struct {
 
 func (cc *CurieCounter) Next() uint32 {
 	return cc.counter.Add(1) - 1
-}
-
-var baseDir string = "./.parquet-store/"
-
-func makeParquetName(fileName string, thing string, num int) string {
-	ext := filepath.Ext(fileName)
-	base := filepath.Base(fileName)
-	stem := strings.TrimSuffix(base, ext)
-
-	return fmt.Sprintf("%v%v-%v-%d", baseDir, stem, thing, num)
 }
 
 func parseSynonymFile(fileName string, batchSize int, cl *ClassLookup, cm *CategoryMap, cc *CurieCounter, wg *sync.WaitGroup) {
@@ -336,7 +335,7 @@ func parseSynonymFile(fileName string, batchSize int, cl *ClassLookup, cm *Categ
 			},
 		)
 
-		curieNum = writeIfGeLen(fileName, "curies", curieNum, tempCuries, batchSize)
+		curieNum = writeIfGeLen(fileName, "Curies", curieNum, tempCuries, batchSize)
 
 		newSynonyms := []SynonymsTable{}
 		for _, synonym := range l0Synonyms {
@@ -361,7 +360,7 @@ func parseSynonymFile(fileName string, batchSize int, cl *ClassLookup, cm *Categ
 		}
 
 		tempSynonyms = append(tempSynonyms, newSynonyms...)
-		synonymNum = writeIfGeLen(fileName, "synonyms", synonymNum, tempCuries, batchSize)
+		synonymNum = writeIfGeLen(fileName, "Synonyms", synonymNum, tempCuries, batchSize)
 	}
 }
 
@@ -397,7 +396,7 @@ func build(cmd *cobra.Command, args []string) {
 	classFileNames := globFileNames(babelDir, "Class.ndjson.zst")
 	cl := buildClassLookup(classFileNames)
 
-	synonymFileNames := globFileNames(babelDir, "Synonym.ndjson.zst")
+	synonymFileNames := globFileNames(babelDir, "Synonyms.ndjson.zst")
 	buildSynonymParquets(synonymFileNames, cl, batchSize)
 }
 
