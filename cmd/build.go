@@ -107,7 +107,7 @@ func cleanToken(token string) string {
 }
 
 func cleanAliases(aliases []string) []string {
-	seen := make(map[string]struct{})
+	seen := map[string]struct{}{}
 
 	for _, a := range aliases {
 		c := strings.ToLower(a)
@@ -153,9 +153,8 @@ func parseClassFile(fileName string, cl *ClassLookup, wg *sync.WaitGroup) {
 		err := decoder.Decode(&cr)
 		if err == io.EOF {
 			break
-		} else {
-			checkError(5, err)
 		}
+		checkError(5, err)
 
 		ids := cr.EquivalentIdentifiers
 		if len(ids) == 0 {
@@ -173,7 +172,7 @@ func parseClassFile(fileName string, cl *ClassLookup, wg *sync.WaitGroup) {
 }
 
 func buildClassLookup(fileNames []string) *ClassLookup {
-	cl := &ClassLookup{data: make(map[string][]string)}
+	cl := &ClassLookup{data: map[string][]string{}}
 	wg := sync.WaitGroup{}
 
 	for _, fileName := range fileNames {
@@ -233,6 +232,20 @@ func writeParquet[T ParquetTable](filePath string, table []T) {
 	checkError(7, err)
 }
 
+func writeIfGeLen[T ParquetTable](filePath string, table []T, batchSize int) bool {
+	if len(table) >= batchSize {
+		writeParquet(filePath, table)
+		return true
+	}
+	return false
+}
+
+func stringToInt(str string) int {
+	num, err := strconv.Atoi(str)
+	checkError(8, err)
+	return num
+}
+
 var l1Regex = regexp.MustCompile(`\W+`)
 
 type CurieCounter struct {
@@ -243,7 +256,16 @@ func (cc *CurieCounter) Next() uint32 {
 	return cc.counter.Add(1) - 1
 }
 
-func parseSynonymFile(fileName string, batchSize uint32, cl *ClassLookup, cm *CategoryMap, cc *CurieCounter, wg *sync.WaitGroup) {
+var baseDir string = "./.parquet-store/"
+
+func makeParquetName(fileName string, thing string, num int) string {
+	ext := filepath.Ext(fileName)
+	base := filepath.Base(fileName)
+	stem := strings.TrimSuffix(base, ext)
+	return fmt.Sprintf("%v%v-%v-%d", baseDir, stem, thing, num)
+}
+
+func parseSynonymFile(fileName string, batchSize int, cl *ClassLookup, cm *CategoryMap, cc *CurieCounter, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	f := yieldReader(fileName)
@@ -252,8 +274,11 @@ func parseSynonymFile(fileName string, batchSize uint32, cl *ClassLookup, cm *Ca
 	zr := yieldDecoder(f)
 	defer zr.Close()
 
-	syt := []SynonymsTable{}
-	cut := []CuriesTable{}
+	tempCuries := []CuriesTable{}
+	tempSynonyms := []SynonymsTable{}
+
+	curNum := 1
+	synNum := 1
 
 	decoder := sonic.ConfigDefault.NewDecoder(zr)
 	for {
@@ -261,9 +286,8 @@ func parseSynonymFile(fileName string, batchSize uint32, cl *ClassLookup, cm *Ca
 		err := decoder.Decode(&sr)
 		if err == io.EOF {
 			break
-		} else if err != nil {
-			throwError(8, err)
 		}
+		checkError(9, err)
 
 		curie := sr.Curie
 		if isBadToken(curie) {
@@ -282,7 +306,8 @@ func parseSynonymFile(fileName string, batchSize uint32, cl *ClassLookup, cm *Ca
 		l0Synonyms := slices.Compact(cleaned)
 		l1Synonyms := []string{}
 		for _, synonym := range l0Synonyms {
-			l1Synonyms = append(l1Synonyms, l1Regex.ReplaceAllString(synonym, ""))
+			l1 := l1Regex.ReplaceAllString(synonym, "")
+			l1Synonyms = append(l1Synonyms, l1)
 		}
 
 		preferred := sr.PreferredName
@@ -293,22 +318,47 @@ func parseSynonymFile(fileName string, batchSize uint32, cl *ClassLookup, cm *Ca
 
 		taxon := 0
 		if len(sr.Taxon) > 0 {
-			s := fmt.Sprintf("%v", sr.Taxon[0])
-			s = strings.TrimPrefix(s, "NCBITaxon:")
-			taxon, _ = strconv.Atoi(s)
+			str := fmt.Sprintf("%v", sr.Taxon[0])
+			str = strings.TrimPrefix(str, "NCBITaxon:")
+			taxon = stringToInt(str)
 		}
 
-		taxonID := uint32(taxon)
-		cut = append(cut, CuriesTable{CurieID: curieID, Curie: curie, PreferredName: preferred, CategoryID: categoryID, Taxon: taxonID})
+		tempCuries = append(
+			tempCuries,
+			CuriesTable{
+				CurieID:       curieID,
+				Curie:         curie,
+				PreferredName: preferred,
+				CategoryID:    categoryID,
+				Taxon:         uint32(taxon),
+			},
+		)
 
 		newSynonyms := []SynonymsTable{}
 		for _, synonym := range l0Synonyms {
-			newSynonyms = append(newSynonyms, SynonymsTable{CurieID: curieID, Synonym: synonym, SourceID: 0})
+			newSynonyms = append(
+				newSynonyms,
+				SynonymsTable{
+					CurieID:  curieID,
+					Synonym:  synonym,
+					SourceID: 0,
+				},
+			)
 		}
 		for _, synonym := range l1Synonyms {
-			newSynonyms = append(newSynonyms, SynonymsTable{CurieID: curieID, Synonym: synonym, SourceID: 1})
+			newSynonyms = append(
+				newSynonyms,
+				SynonymsTable{
+					CurieID:  curieID,
+					Synonym:  synonym,
+					SourceID: 1,
+				},
+			)
 		}
-		syt = append(syt, newSynonyms...)
+		tempSynonyms = append(tempSynonyms, newSynonyms...)
+
+		writeIfGeLen("", tempCuries, batchSize)
+		writeIfGeLen("", tempSynonyms, batchSize)
 	}
 }
 
@@ -324,7 +374,7 @@ type CategoriesTable struct {
 	Category   string `paruquet:"CATEGORY"`
 }
 
-func buildSynonymParquets(fileNames []string, cl *ClassLookup, batchSize uint32) {
+func buildSynonymParquets(fileNames []string, cl *ClassLookup, batchSize int) {
 	wg := sync.WaitGroup{}
 	cm := CategoryMap{}
 	cc := CurieCounter{}
@@ -339,12 +389,7 @@ func build(cmd *cobra.Command, args []string) {
 	babelDir := args[0]
 	batchLen := args[1]
 
-	batchInt, err := strconv.Atoi(batchLen)
-	if err != nil {
-		throwError(9, err)
-	}
-
-	batchSize := uint32(batchInt)
+	batchSize := stringToInt(batchLen)
 
 	classFileNames := globFileNames(babelDir, "Class.ndjson.zst")
 	cl := buildClassLookup(classFileNames)
@@ -361,5 +406,6 @@ var buildCmd = &cobra.Command{
 }
 
 func init() {
+	os.MkdirAll(baseDir, os.ModePerm)
 	rootCmd.AddCommand(buildCmd)
 }
