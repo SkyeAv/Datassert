@@ -232,12 +232,13 @@ func writeParquet[T ParquetTable](filePath string, table []T) {
 	checkError(7, err)
 }
 
-func writeIfGeLen[T ParquetTable](filePath string, table []T, batchSize int) bool {
+func writeIfGeLen[T ParquetTable](fileName string, thing string, num int, table []T, batchSize int) int {
 	if len(table) >= batchSize {
-		writeParquet(filePath, table)
-		return true
+		parquetName := makeParquetName(fileName, thing, num)
+		writeParquet(parquetName, table)
+		return num + 1
 	}
-	return false
+	return num
 }
 
 func stringToInt(str string) int {
@@ -278,8 +279,8 @@ func parseSynonymFile(fileName string, batchSize int, cl *ClassLookup, cm *Categ
 	tempCuries := []CuriesTable{}
 	tempSynonyms := []SynonymsTable{}
 
-	curNum := 1
-	synNum := 1
+	curieNum := 1
+	synonymNum := 1
 
 	decoder := sonic.ConfigDefault.NewDecoder(zr)
 	for {
@@ -335,6 +336,8 @@ func parseSynonymFile(fileName string, batchSize int, cl *ClassLookup, cm *Categ
 			},
 		)
 
+		curieNum = writeIfGeLen(fileName, "curies", curieNum, tempCuries, batchSize)
+
 		newSynonyms := []SynonymsTable{}
 		for _, synonym := range l0Synonyms {
 			newSynonyms = append(
@@ -356,10 +359,9 @@ func parseSynonymFile(fileName string, batchSize int, cl *ClassLookup, cm *Categ
 				},
 			)
 		}
-		tempSynonyms = append(tempSynonyms, newSynonyms...)
 
-		writeIfGeLen("", tempCuries, batchSize)
-		writeIfGeLen("", tempSynonyms, batchSize)
+		tempSynonyms = append(tempSynonyms, newSynonyms...)
+		synonymNum = writeIfGeLen(fileName, "synonyms", synonymNum, tempCuries, batchSize)
 	}
 }
 
@@ -408,5 +410,6 @@ var buildCmd = &cobra.Command{
 
 func init() {
 	os.MkdirAll(baseDir, os.ModePerm)
+
 	rootCmd.AddCommand(buildCmd)
 }
