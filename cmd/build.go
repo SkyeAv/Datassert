@@ -193,8 +193,8 @@ type SynonymRecord struct {
 }
 
 type CategoriesTable struct {
-	CategoryID uint32 `paruquet:"CATEGORY_ID"`
-	Category   string `paruquet:"CATEGORY"`
+	CategoryID uint32 `parquet:"CATEGORY_ID"`
+	Category   string `parquet:"CATEGORY"`
 }
 
 type CategoryMap struct {
@@ -226,24 +226,24 @@ func (cm *CategoryMap) ToTable() []CategoriesTable {
 }
 
 type SynonymsTable struct {
-	CurieID  uint32 `paruquet:"CURIE_ID"`
-	SourceID uint8  `paruquet:"SOURCE_ID"`
-	Synonym  string `paruquet:"SYNONYM"`
+	CurieID  uint32 `parquet:"CURIE_ID"`
+	SourceID uint8  `parquet:"SOURCE_ID"`
+	Synonym  string `parquet:"SYNONYM"`
 }
 
 type CuriesTable struct {
-	CurieID       uint32 `paruquet:"CURIE_ID"`
-	Curie         string `paruquet:"CURIE"`
-	PreferredName string `paruquet:"PREFERRED_NAME"`
-	CategoryID    uint32 `paruquet:"CATEGORY_ID"`
-	Taxon         uint32 `paruquet:"TAXON,optional"`
+	CurieID       uint32 `parquet:"CURIE_ID"`
+	Curie         string `parquet:"CURIE"`
+	PreferredName string `parquet:"PREFERRED_NAME"`
+	CategoryID    uint32 `parquet:"CATEGORY_ID"`
+	Taxon         uint32 `parquet:"TAXON,optional"`
 }
 
 type SourcesTable struct {
-	SourceID      uint8  `paruquet:"SOURCE_ID"`
-	SourceName    string `paruquet:"SOURCE_NAME"`
-	SourceVersion string `paruquet:"SOURCE_VERSION"`
-	NLPLevel      uint8  `paruquet:"NLP_LEVEL"`
+	SourceID      uint8  `parquet:"SOURCE_ID"`
+	SourceName    string `parquet:"SOURCE_NAME"`
+	SourceVersion string `parquet:"SOURCE_VERSION"`
+	NLPLevel      uint8  `parquet:"NLP_LEVEL"`
 }
 
 type ParquetTable interface {
@@ -251,11 +251,7 @@ type ParquetTable interface {
 }
 
 func writeParquet[T ParquetTable](filePath string, table []T) {
-	f, err := os.Create(filePath)
-	checkError(6, err)
-	defer f.Close()
-
-	err = parquet.WriteFile(filePath, table)
+	err := parquet.WriteFile(filePath, table)
 	checkError(7, err)
 }
 
@@ -268,13 +264,13 @@ func makeParquetName(fileName string, thing string, num int) string {
 	return fmt.Sprintf("%v%v%v-%d", baseDir, stem, thing, num)
 }
 
-func writeIfGeLen[T ParquetTable](fileName string, thing string, num int, table []T, batchSize int) int {
+func writeIfGeLen[T ParquetTable](fileName string, thing string, num int, table []T, batchSize int) (int, []T) {
 	if len(table) >= batchSize {
 		parquetName := makeParquetName(fileName, thing, num)
 		writeParquet(parquetName, table)
-		return num + 1
+		return num + 1, table[:0]
 	}
-	return num
+	return num, table
 }
 
 func stringToInt(str string) int {
@@ -332,10 +328,18 @@ func parseSynonymFile(fileName string, batchSize int, cl *ClassLookup, cm *Categ
 		}
 
 		l0Synonyms := slices.Compact(cleaned)
+		l0Set := map[string]struct{}{}
+		for _, synonym := range l0Synonyms {
+			l0Set[synonym] = struct{}{}
+		}
+
 		l1Synonyms := []string{}
 		for _, synonym := range l0Synonyms {
 			l1 := l1Regex.ReplaceAllString(synonym, "")
-			l1Synonyms = append(l1Synonyms, l1)
+
+			if _, exists := l0Set[l1]; !exists {
+				l1Synonyms = append(l1Synonyms, l1)
+			}
 		}
 
 		preferred := sr.PreferredName
@@ -362,7 +366,7 @@ func parseSynonymFile(fileName string, batchSize int, cl *ClassLookup, cm *Categ
 			},
 		)
 
-		curieNum = writeIfGeLen(fileName, "Curies", curieNum, tempCuries, batchSize)
+		curieNum, tempCuries = writeIfGeLen(fileName, "Curies", curieNum, tempCuries, batchSize)
 
 		newSynonyms := []SynonymsTable{}
 		for _, synonym := range l0Synonyms {
@@ -387,8 +391,11 @@ func parseSynonymFile(fileName string, batchSize int, cl *ClassLookup, cm *Categ
 		}
 
 		tempSynonyms = append(tempSynonyms, newSynonyms...)
-		synonymNum = writeIfGeLen(fileName, "Synonyms", synonymNum, tempCuries, batchSize)
+		synonymNum, tempSynonyms = writeIfGeLen(fileName, "Synonyms", synonymNum, tempSynonyms, batchSize)
 	}
+
+	_, _ = writeIfGeLen(fileName, "Curies", curieNum, tempCuries, 0)
+	_, _ = writeIfGeLen(fileName, "Synonyms", synonymNum, tempSynonyms, 0)
 }
 
 var sources []SourcesTable = []SourcesTable{
@@ -415,6 +422,7 @@ func buildSynonymParquets(fileNames []string, cl *ClassLookup, batchSize int) {
 		wg.Add(1)
 		go parseSynonymFile(fileName, batchSize, cl, &cm, &cc, &wg)
 	}
+	wg.Wait()
 
 	categoryParquet := makeParquetName("Biolink", "Categories", 1)
 	writeParquet(categoryParquet, cm.ToTable())
