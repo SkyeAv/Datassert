@@ -12,5 +12,4 @@ func Execute() {
 	rootCmd.Execute()
 	rootCmd.GenBashCompletionFile("completions.bash")
 	rootCmd.GenZshCompletionFile("completions.zsh")
-	rootCmd.GenPowerShellCompletionFile("completions.ps1")
 }
