@@ -81,10 +81,8 @@ func isBadToken(token string) bool {
 		}
 	}
 
-	for _, badToken := range badTokens {
-		if token == badToken {
-			return true
-		}
+	if slices.Contains(badTokens, token) {
+		return true
 	}
 
 	return false
