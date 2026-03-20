@@ -495,13 +495,11 @@ func buildDuckDB(dbPath string) {
 	iterExecDB(db, indexOps)
 }
 
+var babelDir string
+var dbPath string
+var batchSize int
+
 func build(cmd *cobra.Command, args []string) {
-	babelDir := args[0]
-	dbPath := args[1]
-	batchLen := args[2]
-
-	batchSize := stringToInt(batchLen)
-
 	classFileNames := globFileNames(babelDir, "Class.ndjson.zst")
 	cl := buildClassLookup(classFileNames)
 
@@ -512,10 +510,9 @@ func build(cmd *cobra.Command, args []string) {
 }
 
 var buildCmd = &cobra.Command{
-	Use:   "build [babel-dir] [db-path] [batch-len]",
+	Use:   "build --babel-dir [babel-dir] --db-path [Optional:db-path] --batch-size [Optional:batch-size]",
 	Short: "Placeholder",
 	Long:  "Placeholder",
-	Args:  cobra.ExactArgs(3),
 	Run:   build,
 }
 
@@ -523,4 +520,10 @@ func init() {
 	os.MkdirAll(parquetBaseDir, os.ModePerm)
 
 	rootCmd.AddCommand(buildCmd)
+
+	buildCmd.Flags().StringVar(&babelDir, "babel-dir", "", "Path to babel directory with Synonyms||Class.ndjson.zst files")
+	buildCmd.Flags().StringVar(&dbPath, "db-path", "./datassert.duckdb", "Path to build datassert duckdb")
+	buildCmd.Flags().IntVar(&batchSize, "batch-size", 100, "Size of each parquet batch")
+
+	buildCmd.MarkFlagRequired("babel-dir")
 }
