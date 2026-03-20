@@ -500,10 +500,10 @@ var dbPath string
 var batchSize int
 
 func build(cmd *cobra.Command, args []string) {
-	classFileNames := globFileNames(babelDir, "Class.ndjson.zst")
+	classFileNames := globFileNames(babelDir, "*Class.ndjson.zst")
 	cl := buildClassLookup(classFileNames)
 
-	synonymFileNames := globFileNames(babelDir, "Synonyms.ndjson.zst")
+	synonymFileNames := globFileNames(babelDir, "*Synonyms.ndjson.zst")
 	buildSynonymParquets(synonymFileNames, cl, batchSize)
 
 	buildDuckDB(dbPath)
