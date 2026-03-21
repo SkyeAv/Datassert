@@ -546,9 +546,9 @@ func build(cmd *cobra.Command, args []string) {
 }
 
 var buildCmd = &cobra.Command{
-	Use:   "build",
-	Short: "Build Datassert data from a Babel directory",
-	Long:  "Reads Class.ndjson.zst and Synonyms.ndjson.zst from --babel-dir, writes parquet artifacts, and builds a DuckDB database at --db-path (default: ./datassert.duckdb).",
+	Use:   "build --babel-dir <dir>",
+	Short: "Build a DuckDB assertion database from Babel exports",
+	Long:  "Reads *Class.ndjson.zst and *Synonyms.ndjson.zst files from --babel-dir, writes staging parquet artifacts to ./.parquet-store/, and builds a DuckDB database at --db-path (default: ./datassert.duckdb).",
 	Run:   build,
 }
 
@@ -557,7 +557,7 @@ func init() {
 
 	rootCmd.AddCommand(buildCmd)
 
-	buildCmd.Flags().StringVar(&babelDir, "babel-dir", "", "Directory containing Babel Class and Synonyms .ndjson.zst files")
+	buildCmd.Flags().StringVar(&babelDir, "babel-dir", "", "Directory containing Babel *Class.ndjson.zst and *Synonyms.ndjson.zst files")
 	buildCmd.Flags().StringVar(&dbPath, "db-path", "./datassert.duckdb", "Output path for the DuckDB database")
 	buildCmd.Flags().IntVar(&batchSize, "batch-size", 1000000, "Number of records per Parquet batch")
 
