@@ -289,7 +289,7 @@ func writeIfGtLen[T ParquetTable](fileName string, thing string, num int, table 
 	if len(table) > batchSize {
 		parquetName := makeParquetName(fileName, thing, num)
 		writeParquet(parquetName, table)
-		return num + 1, table[:0]
+		return 0, []T{}
 	}
 	return num, table
 }
