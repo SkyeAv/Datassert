@@ -48,18 +48,26 @@ func globFileNames(dir string, suffix string) []string {
 
 type ClassLookup struct {
 	mu   sync.Mutex
-	data map[string][]string
+	data map[string]string
 }
 
 func (cl *ClassLookup) Set(key string, value []string) {
 	cl.mu.Lock()
 	defer cl.mu.Unlock()
-	cl.data[key] = value
+
+	joined := strings.Join(value, "\t")
+	cl.data[key] = joined
 }
 
 func (cl *ClassLookup) Get(key string) ([]string, bool) {
+	cl.mu.Lock()
+	defer cl.mu.Unlock()
+
 	val, ok := cl.data[key]
-	return val, ok
+	delete(cl.data, key)
+
+	split := strings.Split(val, "\t")
+	return split, ok
 }
 
 var badPrefixes []string = []string{
@@ -176,7 +184,7 @@ func buildClassLookup(fileNames []string, nRoutines int) *ClassLookup {
 	g := &errgroup.Group{}
 	g.SetLimit(nRoutines)
 
-	cl := &ClassLookup{data: map[string][]string{}}
+	cl := &ClassLookup{data: map[string]string{}}
 
 	for _, fileName := range fileNames {
 		g.Go(func() error {
