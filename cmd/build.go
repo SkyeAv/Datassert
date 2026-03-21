@@ -9,13 +9,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
-
-	"runtime"
 
 	"github.com/bytedance/sonic"
 	_ "github.com/duckdb/duckdb-go/v2"
