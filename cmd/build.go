@@ -502,7 +502,11 @@ var sources []SourcesTable = []SourcesTable{
 
 func buildSynonymParquets(fileNames []string, cl *ClassLookup, batchSize int, nRoutines int, bufferSize int) {
 	cm := CategoryMap{}
+
 	cc := CurieCounter{}
+	for i := range cc.shards {
+		cc.shards[i].m = map[string]uint32{}
+	}
 
 	n := len(fileNames)
 	bar := uiprogress.AddBar(n)
