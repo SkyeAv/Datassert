@@ -51,11 +51,15 @@ type ClassLookup struct {
 	data map[string]string
 }
 
-func (cl *ClassLookup) Set(key string, value []string) {
+func (cl *ClassLookup) Set(key string, val []string) {
 	cl.mu.Lock()
 	defer cl.mu.Unlock()
 
-	joined := strings.Join(value, "\t")
+	if len(val) == 0 {
+		return
+	}
+
+	joined := strings.Join(val, "\t")
 	cl.data[key] = joined
 }
 
@@ -302,11 +306,30 @@ func stringToInt(str string) int {
 var l1Regex = regexp.MustCompile(`\W+`)
 
 type CurieCounter struct {
-	counter atomic.Uint32
+	mu      sync.RWMutex
+	m       map[string]uint32
+	counter uint32
 }
 
-func (cc *CurieCounter) Next() uint32 {
-	return cc.counter.Add(1) - 1
+func (cc *CurieCounter) GetOrNext(curie string) uint32 {
+	cc.mu.RLock()
+	if curieID, ok := cc.m[curie]; ok {
+		cc.mu.RUnlock()
+		return curieID
+	}
+	cc.mu.RUnlock()
+
+	cc.mu.Lock()
+	defer cc.mu.Unlock()
+
+	if curieID, ok := cc.m[curie]; ok {
+		return curieID
+	}
+
+	curieID := cc.counter
+	cc.m[curie] = curieID
+	cc.counter++
+	return curieID
 }
 
 func parseSynonymFile(fileName string, batchSize int, cl *ClassLookup, cm *CategoryMap, cc *CurieCounter, bar *uiprogress.Bar) {
@@ -336,7 +359,7 @@ func parseSynonymFile(fileName string, batchSize int, cl *ClassLookup, cm *Categ
 		if isBadToken(curie) {
 			continue
 		}
-		curieID := cc.Next()
+		curieID := cc.GetOrNext(curie)
 
 		synonyms := sr.Synonyms
 		synonyms = append(synonyms, curie)
