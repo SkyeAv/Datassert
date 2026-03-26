@@ -16,6 +16,7 @@ import (
 	"sync/atomic"
 
 	"github.com/bytedance/sonic"
+	"github.com/cespare/xxhash/v2"
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/gosuri/uiprogress"
 	"github.com/klauspost/compress/zstd"
@@ -45,29 +46,40 @@ func globFileNames(dir string, suffix string) []string {
 	return fileNames
 }
 
+const nShards = uint(20)
+
 type ClassLookup struct {
-	mu   sync.Mutex
-	data map[string]string
+	shards [nShards]struct {
+		mu   sync.Mutex
+		data map[string]string
+		_pad [40]byte
+	}
+}
+
+func (cl *ClassLookup) Shard(key string) uint {
+	h := xxhash.Sum64String(key)
+	return uint(h) % nShards
 }
 
 func (cl *ClassLookup) Set(key string, val []string) {
-	cl.mu.Lock()
-	defer cl.mu.Unlock()
-
 	if len(val) == 0 {
 		return
 	}
 
-	joined := strings.Join(val, "\t")
-	cl.data[key] = joined
+	s := &cl.shards[cl.Shard(key)]
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.data[key] = strings.Join(val, "\t")
 }
 
 func (cl *ClassLookup) Get(key string) ([]string, bool) {
-	cl.mu.Lock()
-	defer cl.mu.Unlock()
+	s := &cl.shards[cl.Shard(key)]
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	val, ok := cl.data[key]
-	delete(cl.data, key)
+	val, ok := s.data[key]
+	delete(s.data, key)
 
 	split := strings.Split(val, "\t")
 	return split, ok
@@ -189,8 +201,10 @@ func buildClassLookup(fileNames []string, nRoutines int) *ClassLookup {
 	g := &errgroup.Group{}
 	g.SetLimit(nRoutines)
 
-	cl := &ClassLookup{data: map[string]string{}}
-
+	cl := &ClassLookup{}
+	for i := range cl.shards {
+		cl.shards[i].data = map[string]string{}
+	}
 	n := len(fileNames)
 	bar := uiprogress.AddBar(n)
 	bar.AppendCompleted()
