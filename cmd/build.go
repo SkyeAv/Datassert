@@ -294,16 +294,16 @@ func writeParquet[T ParquetTable](filePath string, table []T) {
 
 var parquetBaseDir string = "./.parquet-store/"
 
-func makeParquetName(fileName string, thing string, num int) string {
+func makeParquetName(fileName string, thing string, num int, workerID int) string {
 	base := filepath.Base(fileName)
 	stem := strings.TrimSuffix(base, "Synonyms.ndjson.zst")
 
-	return fmt.Sprintf("%v%v%v-%d.parquet", parquetBaseDir, stem, thing, num)
+	return fmt.Sprintf("%v%v%v-%d-%d.parquet", parquetBaseDir, stem, thing, num, workerID)
 }
 
-func writeIfGtLen[T ParquetTable](fileName string, thing string, num int, table []T, batchSize int) (int, []T) {
+func writeIfGtLen[T ParquetTable](fileName string, thing string, num int, workerID int, table []T, batchSize int) (int, []T) {
 	if len(table) > batchSize {
-		parquetName := makeParquetName(fileName, thing, num)
+		parquetName := makeParquetName(fileName, thing, num, workerID)
 		writeParquet(parquetName, table)
 		return num + 1, []T{}
 	}
@@ -354,29 +354,28 @@ func (cc *CurieCounter) GetOrNext(curie string) uint32 {
 	return curieID
 }
 
-func parseSynonymFile(fileName string, batchSize int, cl *ClassLookup, cm *CategoryMap, cc *CurieCounter, bar *uiprogress.Bar) {
+func decodeRecord(records chan SynonymRecord, zr *zstd.Decoder) {
+	defer close(records)
+	decoder := sonic.ConfigDefault.NewDecoder(zr)
+	for {
+		var sr SynonymRecord
+		err := decoder.Decode(&sr)
+		if err == io.EOF {
+			return
+		}
+		checkError(9, err)
+		records <- sr
+	}
+}
 
-	f := yieldReader(fileName)
-	defer f.Close()
-
-	zr := yieldDecoder(f)
-	defer zr.Close()
-
+func processSynonymRecords(fileName string, workerID int, batchSize int, records <-chan SynonymRecord, cl *ClassLookup, cm *CategoryMap, cc *CurieCounter) {
 	tempCuries := []CuriesTable{}
 	tempSynonyms := []SynonymsTable{}
 
 	curieNum := 1
 	synonymNum := 1
 
-	decoder := sonic.ConfigDefault.NewDecoder(zr)
-	for {
-		sr := SynonymRecord{}
-		err := decoder.Decode(&sr)
-		if err == io.EOF {
-			break
-		}
-		checkError(9, err)
-
+	for sr := range records {
 		curie := sr.Curie
 		if isBadToken(curie) {
 			continue
@@ -431,7 +430,7 @@ func parseSynonymFile(fileName string, batchSize int, cl *ClassLookup, cm *Categ
 			},
 		)
 
-		curieNum, tempCuries = writeIfGtLen(fileName, "Curies", curieNum, tempCuries, batchSize)
+		curieNum, tempCuries = writeIfGtLen(fileName, "Curies", curieNum, workerID, tempCuries, batchSize)
 
 		newSynonyms := []SynonymsTable{}
 		for _, synonym := range l0Synonyms {
@@ -456,12 +455,33 @@ func parseSynonymFile(fileName string, batchSize int, cl *ClassLookup, cm *Categ
 		}
 
 		tempSynonyms = append(tempSynonyms, newSynonyms...)
-		synonymNum, tempSynonyms = writeIfGtLen(fileName, "Synonyms", synonymNum, tempSynonyms, batchSize)
+		synonymNum, tempSynonyms = writeIfGtLen(fileName, "Synonyms", synonymNum, workerID, tempSynonyms, batchSize)
 	}
 
-	_, _ = writeIfGtLen(fileName, "Curies", curieNum, tempCuries, 0)
-	_, _ = writeIfGtLen(fileName, "Synonyms", synonymNum, tempSynonyms, 0)
+	_, _ = writeIfGtLen(fileName, "Curies", curieNum, workerID, tempCuries, 0)
+	_, _ = writeIfGtLen(fileName, "Synonyms", synonymNum, workerID, tempSynonyms, 0)
+}
 
+func parseSynonymFile(fileName string, batchSize int, nRoutines int, cl *ClassLookup, cm *CategoryMap, cc *CurieCounter, bar *uiprogress.Bar) {
+	f := yieldReader(fileName)
+	defer f.Close()
+
+	zr := yieldDecoder(f)
+	defer zr.Close()
+
+	records := make(chan SynonymRecord, 2048)
+	go decodeRecord(records, zr)
+
+	g := &errgroup.Group{}
+	g.SetLimit(nRoutines)
+	for w := range nRoutines {
+		g.Go(func() error {
+			processSynonymRecords(fileName, w, batchSize, records, cl, cm, cc)
+			return nil
+		})
+	}
+
+	g.Wait()
 	bar.Incr()
 }
 
@@ -481,9 +501,6 @@ var sources []SourcesTable = []SourcesTable{
 }
 
 func buildSynonymParquets(fileNames []string, cl *ClassLookup, batchSize int, nRoutines int) {
-	g := &errgroup.Group{}
-	g.SetLimit(nRoutines)
-
 	cm := CategoryMap{}
 	cc := CurieCounter{}
 
@@ -493,18 +510,13 @@ func buildSynonymParquets(fileNames []string, cl *ClassLookup, batchSize int, nR
 	bar.PrependElapsed()
 
 	for _, fileName := range fileNames {
-		g.Go(func() error {
-			parseSynonymFile(fileName, batchSize, cl, &cm, &cc, bar)
-			return nil
-		})
+		parseSynonymFile(fileName, batchSize, nRoutines, cl, &cm, &cc, bar)
 	}
 
-	g.Wait()
-
-	categoryParquet := makeParquetName("BiolinkSynonyms.ndjson.zst", "Categories", 1)
+	categoryParquet := makeParquetName("BiolinkSynonyms.ndjson.zst", "Categories", 1, 1)
 	writeParquet(categoryParquet, cm.ToTable())
 
-	sourceParquet := makeParquetName("BabelSynonyms.ndjson.zst", "Sources", 1)
+	sourceParquet := makeParquetName("BabelSynonyms.ndjson.zst", "Sources", 1, 1)
 	writeParquet(sourceParquet, sources)
 }
 
@@ -571,7 +583,7 @@ func build(cmd *cobra.Command, args []string) {
 	cpuCount := runtime.NumCPU()
 
 	classFileNames := globFileNames(babelDir, "*Class.ndjson.zst")
-	cl := buildClassLookup(classFileNames, (cpuCount))
+	cl := buildClassLookup(classFileNames, (cpuCount / 2))
 
 	synonymFileNames := globFileNames(babelDir, "*Synonyms.ndjson.zst")
 	buildSynonymParquets(synonymFileNames, cl, batchSize, (cpuCount / 2))
