@@ -319,29 +319,38 @@ func stringToInt(str string) int {
 var l1Regex = regexp.MustCompile(`\W+`)
 
 type CurieCounter struct {
-	mu      sync.RWMutex
-	m       map[string]uint32
-	counter uint32
+	counter atomic.Uint32
+	shards  [nShards]struct {
+		mu   sync.RWMutex
+		m    map[string]uint32
+		_pad [40]byte
+	}
+}
+
+func (cc *CurieCounter) Shard(curie string) uint {
+	h := xxhash.Sum64String(curie)
+	return uint(h) % nShards
 }
 
 func (cc *CurieCounter) GetOrNext(curie string) uint32 {
-	cc.mu.RLock()
-	if curieID, ok := cc.m[curie]; ok {
-		cc.mu.RUnlock()
+	s := &cc.shards[cc.Shard(curie)]
+
+	s.mu.RLock()
+	if curieID, ok := s.m[curie]; ok {
+		s.mu.RUnlock()
 		return curieID
 	}
-	cc.mu.RUnlock()
+	s.mu.RUnlock()
 
-	cc.mu.Lock()
-	defer cc.mu.Unlock()
+	s.mu.Lock()
+	defer s.mu.Unlock()
 
-	if curieID, ok := cc.m[curie]; ok {
+	if curieID, ok := s.m[curie]; ok {
 		return curieID
 	}
 
-	curieID := cc.counter
-	cc.m[curie] = curieID
-	cc.counter++
+	curieID := cc.counter.Add(1) - 1
+	s.m[curie] = curieID
 	return curieID
 }
 
