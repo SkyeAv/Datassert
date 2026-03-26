@@ -462,14 +462,14 @@ func processSynonymRecords(fileName string, workerID int, batchSize int, records
 	_, _ = writeIfGtLen(fileName, "Synonyms", synonymNum, workerID, tempSynonyms, 0)
 }
 
-func parseSynonymFile(fileName string, batchSize int, nRoutines int, cl *ClassLookup, cm *CategoryMap, cc *CurieCounter, bar *uiprogress.Bar) {
+func parseSynonymFile(fileName string, batchSize int, nRoutines int, bufferSize int, cl *ClassLookup, cm *CategoryMap, cc *CurieCounter, bar *uiprogress.Bar) {
 	f := yieldReader(fileName)
 	defer f.Close()
 
 	zr := yieldDecoder(f)
 	defer zr.Close()
 
-	records := make(chan SynonymRecord, 2048)
+	records := make(chan SynonymRecord, bufferSize)
 	go decodeRecord(records, zr)
 
 	g := &errgroup.Group{}
@@ -500,7 +500,7 @@ var sources []SourcesTable = []SourcesTable{
 	},
 }
 
-func buildSynonymParquets(fileNames []string, cl *ClassLookup, batchSize int, nRoutines int) {
+func buildSynonymParquets(fileNames []string, cl *ClassLookup, batchSize int, nRoutines int, bufferSize int) {
 	cm := CategoryMap{}
 	cc := CurieCounter{}
 
@@ -510,7 +510,7 @@ func buildSynonymParquets(fileNames []string, cl *ClassLookup, batchSize int, nR
 	bar.PrependElapsed()
 
 	for _, fileName := range fileNames {
-		parseSynonymFile(fileName, batchSize, nRoutines, cl, &cm, &cc, bar)
+		parseSynonymFile(fileName, batchSize, nRoutines, bufferSize, cl, &cm, &cc, bar)
 	}
 
 	categoryParquet := makeParquetName("BiolinkSynonyms.ndjson.zst", "Categories", 1, 1)
@@ -575,6 +575,7 @@ func buildDuckDB(dbPath string) {
 var babelDir string
 var dbPath string
 var batchSize int
+var bufferSize int
 
 func build(cmd *cobra.Command, args []string) {
 	uiprogress.Start()
@@ -586,7 +587,7 @@ func build(cmd *cobra.Command, args []string) {
 	cl := buildClassLookup(classFileNames, (cpuCount / 2))
 
 	synonymFileNames := globFileNames(babelDir, "*Synonyms.ndjson.zst")
-	buildSynonymParquets(synonymFileNames, cl, batchSize, (cpuCount / 2))
+	buildSynonymParquets(synonymFileNames, cl, batchSize, (cpuCount / 2), bufferSize)
 
 	buildDuckDB(dbPath)
 }
@@ -606,6 +607,7 @@ func init() {
 	buildCmd.Flags().StringVar(&babelDir, "babel-dir", "", "Directory containing Babel *Class.ndjson.zst and *Synonyms.ndjson.zst files")
 	buildCmd.Flags().StringVar(&dbPath, "db-path", "./datassert.duckdb", "Output path for the DuckDB database")
 	buildCmd.Flags().IntVar(&batchSize, "batch-size", 1000000, "Number of records per Parquet batch")
+	buildCmd.Flags().IntVar(&bufferSize, "buffer-size", 2048, "Size of the channel buffer used to process synonym files")
 
 	buildCmd.MarkFlagRequired("babel-dir")
 }
