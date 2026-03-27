@@ -46,7 +46,7 @@ func globFileNames(dir string, suffix string) []string {
 	return fileNames
 }
 
-func computeMD5(str string) uint64 {
+func computeXXHash(str string) uint64 {
 	b := []byte(str)
 	return xxhash.Sum64(b)
 }
@@ -59,7 +59,7 @@ func selectShard(h uint64) uint {
 }
 
 func hashAndShard(str string) (uint64, uint) {
-	h := computeMD5(str)
+	h := computeXXHash(str)
 	whichShard := selectShard(h)
 	return h, whichShard
 }
@@ -242,24 +242,29 @@ type SynonymRecord struct {
 }
 
 type CategoriesTable struct {
-	shards [nShards]struct {
-		rows []struct {
-			CategoryID uint32 `parquet:"CATEGORY_ID"`
-			Category   string `parquet:"CATEGORY_NAME"`
-		}
+	shards [nShards][]struct {
+		CategoryID uint32 `parquet:"CATEGORY_ID"`
+		Category   string `parquet:"CATEGORY_NAME"`
 	}
 }
 
 type CategoryMap struct {
-	m       sync.Map
-	counter atomic.Uint32
+	shards [nShards]struct{
+		m       sync.Map
+		counter atomic.Uint32
+	}
 }
 
-func (cm *CategoryMap) GetOrAdd(category string) uint32 {
-	if val, ok := cm.m.Load(category); ok {
+func (cm *CategoryMap) GetOrAdd(caregory string, whichShard int) uint32 {
+	h := computeXXHash(category)
+	whichShard := selectShard(h)
+
+	s := &cm.shards[whichShard]
+
+	if val, ok := s.m.Load(category); ok {
 		return val.(uint32)
 	}
-	actual, _ := cm.m.LoadOrStore(category, cm.counter.Add(1))
+	actual, _ := s.m.LoadOrStore(category, s.counter.Add(1))
 	return actual.(uint32)
 }
 
@@ -279,35 +284,29 @@ func (cm *CategoryMap) ToTable() []CategoriesTable {
 }
 
 type SynonymsTable struct {
-	shards [nShards]struct {
-		rows []struct {
-			CurieID  uint32 `parquet:"CURIE_ID"`
-			SourceID uint8  `parquet:"SOURCE_ID"`
-			Synonym  string `parquet:"SYNONYM"`
-		}
+	shards [nShards][]struct {
+		CurieID  uint32 `parquet:"CURIE_ID"`
+		SourceID uint8  `parquet:"SOURCE_ID"`
+		Synonym  string `parquet:"SYNONYM"`
 	}
 }
 
 type CuriesTable struct {
-	shards [nShards]struct {
-		rows []struct {
-			CurieID       uint32 `parquet:"CURIE_ID"`
-			Curie         string `parquet:"CURIE"`
-			PreferredName string `parquet:"PREFERRED_NAME"`
-			CategoryID    uint32 `parquet:"CATEGORY_ID"`
-			Taxon         uint32 `parquet:"TAXON_ID,optional"`
-		}
+	shards [nShards][]struct {
+		CurieID       uint32 `parquet:"CURIE_ID"`
+		Curie         string `parquet:"CURIE"`
+		PreferredName string `parquet:"PREFERRED_NAME"`
+		CategoryID    uint32 `parquet:"CATEGORY_ID"`
+		Taxon         uint32 `parquet:"TAXON_ID,optional"`
 	}
 }
 
 type SourcesTable struct {
-	shards [nShards]struct {
-		rows []struct {
-			SourceID      uint8  `parquet:"SOURCE_ID"`
-			SourceName    string `parquet:"SOURCE_NAME"`
-			SourceVersion string `parquet:"SOURCE_VERSION"`
-			NLPLevel      uint8  `parquet:"NLP_LEVEL"`
-		}
+	shards [nShards][]struct {
+		SourceID      uint8  `parquet:"SOURCE_ID"`
+		SourceName    string `parquet:"SOURCE_NAME"`
+		SourceVersion string `parquet:"SOURCE_VERSION"`
+		NLPLevel      uint8  `parquet:"NLP_LEVEL"`
 	}
 }
 
@@ -329,14 +328,13 @@ func makeParquetName(fileName string, thing string, fileNum int, shardNum int, w
 	return fmt.Sprintf("%v%v%v%d-%d-%d.parquet", parquetBaseDir, stem, thing, fileNum, shardNum, workerID)
 }
 
-func writeIfGtLen[T ParquetTable](fileName string, thing string, fileNum int, shardNum int, workerID int, table T, maxBatch int) (int, T) {
-	for i := range nShards {
-		tableShard := table[i]
-		if len(tableShard) > maxBatch {
-			parquetName := makeParquetName(fileName, thing, fileNum, shardNum, workerID)
-			writeParquet(parquetName, table)
-			return fileNum + 1, []T{}
-		}
+func writeIfGtLen[T ParquetTable](fileName string, thing string, fileNum int, shardNum int, workerID int, table *T, maxBatch int) (int, T) {
+	s := &table.shards[shardNum]
+	if len(s) > maxBatch {
+		parquetName := makeParquetName(fileName, thing, fileNum, shardNum, workerID)
+		writeParquet(parquetName, s)
+		s = []{}
+		return fileNum + 1, table
 	}
 
 	return fileNum, table
@@ -533,7 +531,7 @@ func buildSynonymParquets(fileNames []string, cl *ClassLookup, nRoutines int) {
 	cm := CategoryMap{}
 
 	cc := CurieCounter{}
-	for i := range cc.shards {
+	for i := range nShards {
 		cc.shards[i].m = map[uint64]uint32{}
 	}
 
