@@ -677,7 +677,7 @@ func init() {
 
 	buildCmd.Flags().StringVar(&babelDir, "babel-dir", "", "Directory containing Babel *Class.ndjson.zst and *Synonyms.ndjson.zst files.")
 	buildCmd.Flags().StringVar(&dbPath, "db-path", "./.datassert", "Base output path for the sharded DuckDB databases.")
-	buildCmd.Flags().IntVar(&batchSize, "batch-size", 1000000, "Number of records per Parquet batch.")
+	buildCmd.Flags().IntVar(&batchSize, "batch-size", 50000, "Number of records per Parquet batch.")
 	buildCmd.Flags().IntVar(&bufferSize, "buffer-size", 2048, "Size of the channel buffer used to process synonym files.")
 	buildCmd.Flags().IntVar(&classCPUFraction, "class-cpu-fraction", 2, "Fraction of CPU cores used to ingest Babel *Class.ndjson.zst files.")
 	buildCmd.Flags().IntVar(&synonymCPUFraction, "synonym-cpu-fraction", 4, "Fraction of CPU cores used to ingest Babel *Synonyms.ndjson.zst files.")
