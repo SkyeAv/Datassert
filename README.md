@@ -26,7 +26,7 @@ datassert build --babel-dir /path/to/babel
 | Flag | Required | Default | Description |
 | --- | --- | --- | --- |
 | `--babel-dir` | Yes | N/A | Directory containing Babel `*Class.ndjson.zst` and `*Synonyms.ndjson.zst` files |
-| `--db-path` | No | `./.datassert` | Base output path for sharded DuckDB databases |
+| `--db-dir` | No | `./.datassert` | Output directory for sharded DuckDB databases |
 | `--batch-size` | No | `50000` | Number of records per Parquet batch |
 | `--buffer-size` | No | `2048` | Channel buffer size for synonym file processing |
 | `--class-cpu-fraction` | No | `2` | Divisor of `NumCPU()` for class file goroutines |
@@ -40,17 +40,17 @@ datassert build --babel-dir /path/to/babel
 ### Output Artifacts
 
 - Staging Parquet files are written to `./.parquet-store/`.
-- 16 sharded DuckDB databases are written to `<db-path>-shard{0..15}.duckdb`.
+- 16 sharded DuckDB databases are written to `<db-dir>/datassert-shard{0..15}.duckdb`.
 - Each shard contains `SOURCES`, `CATEGORIES`, `CURIES`, and `SYNONYMS` tables, sorted and indexed for query performance.
 
 ### Examples
 
 ```bash
-# Use defaults for db path and batch size
+# Use defaults for db dir and batch size
 datassert build --babel-dir ./babel-exports
 
-# Write databases to a custom base path (produces ./data/mydb-shard{0..15}.duckdb)
-datassert build --babel-dir ./babel-exports --db-path ./data/mydb
+# Write databases to a custom directory (produces ./data/mydb/datassert-shard{0..15}.duckdb)
+datassert build --babel-dir ./babel-exports --db-dir ./data/mydb
 
 # Tune Parquet batch size and concurrency
 datassert build --babel-dir ./babel-exports --batch-size 100000 --class-cpu-fraction 1

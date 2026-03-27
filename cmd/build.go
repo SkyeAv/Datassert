@@ -219,8 +219,11 @@ func buildClassLookup(fileNames []string, nRoutines int) *ClassLookup {
 	}
 
 	bar := uiprogress.AddBar(len(fileNames))
-	bar.AppendCompleted()
 	bar.PrependElapsed()
+	bar.PrependFunc(func(b *uiprogress.Bar) string {
+		return "Building In-Memory Classes... "
+	})
+	bar.AppendCompleted()
 
 	for _, fileName := range fileNames {
 		g.Go(func() error {
@@ -537,8 +540,11 @@ func buildSynonymParquets(fileNames []string, cl *ClassLookup, nRoutines int) {
 	}
 
 	bar := uiprogress.AddBar(len(fileNames))
-	bar.AppendCompleted()
 	bar.PrependElapsed()
+	bar.PrependFunc(func(b *uiprogress.Bar) string {
+		return "Building Parquets... "
+	})
+	bar.AppendCompleted()
 
 	for _, fileName := range fileNames {
 		parseSynonymFile(fileName, nRoutines, cl, &cm, &cc, bar)
@@ -629,8 +635,11 @@ func buildShardDB(basePath string, shardNum uint, bar *uiprogress.Bar) {
 
 func buildDuckDBs() {
 	bar := uiprogress.AddBar(int(nShards))
-	bar.AppendCompleted()
 	bar.PrependElapsed()
+	bar.PrependFunc(func(b *uiprogress.Bar) string {
+		return "Building DuckDB... "
+	})
+	bar.AppendCompleted()
 
 	for i := range nShards {
 		buildShardDB(dbDir, i, bar)
