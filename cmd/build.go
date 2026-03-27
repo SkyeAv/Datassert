@@ -145,7 +145,7 @@ func cleanToken(token string) string {
 }
 
 func cleanAliases(aliases []string) []string {
-	out := aliases[:0]
+	out := []string{}
 
 	for _, a := range aliases {
 		c := strings.ToLower(a)
