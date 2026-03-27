@@ -603,7 +603,7 @@ func build(cmd *cobra.Command, args []string) {
 	cl := buildClassLookup(classFileNames, (cpuCount / 2))
 
 	synonymFileNames := globFileNames(babelDir, "*Synonyms.ndjson.zst")
-	buildSynonymParquets(synonymFileNames, cl, batchSize, (cpuCount / 2), bufferSize)
+	buildSynonymParquets(synonymFileNames, cl, batchSize, (cpuCount / 4), bufferSize)
 
 	buildDuckDB(dbPath)
 }
