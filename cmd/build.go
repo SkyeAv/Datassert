@@ -1,9 +1,7 @@
 package cmd
 
 import (
-	"crypto/md5"
 	"database/sql"
-	"encoding/binary"
 	"fmt"
 	"io"
 	"log"
@@ -18,6 +16,7 @@ import (
 	"sync/atomic"
 
 	"github.com/bytedance/sonic"
+	"github.com/cespare/xxhash/v2"
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/gosuri/uiprogress"
 	"github.com/klauspost/compress/zstd"
@@ -47,31 +46,30 @@ func globFileNames(dir string, suffix string) []string {
 	return fileNames
 }
 
-func computeMD5(str string) [16]byte {
+func computeMD5(str string) uint64 {
 	b := []byte(str)
-	return md5.Sum(b)
+	return xxhash.Sum64(b)
 }
 
 const nShards = uint(20)
 
-func selectShard(h [16]byte) uint {
-	asInt := binary.LittleEndian.Uint64(h[:8])
-	asUint := uint(asInt)
+func selectShard(h uint64) uint {
+	asUint := uint(h)
 	return asUint % nShards
+}
+
+func hashAndShard(str string) (uint64, uint) {
+	h := computeMD5(str)
+	whichShard := selectShard(h)
+	return h, whichShard
 }
 
 type ClassLookup struct {
 	shards [nShards]struct {
 		mu   sync.Mutex
-		data map[[16]byte]string
+		data map[uint64]string
 		_pad [40]byte
 	}
-}
-
-func (cl *ClassLookup) Shard(key string) ([16]byte, uint) {
-	h := computeMD5(key)
-	whichShard := selectShard(h)
-	return h, whichShard
 }
 
 func (cl *ClassLookup) Set(key string, val []string) {
@@ -79,7 +77,7 @@ func (cl *ClassLookup) Set(key string, val []string) {
 		return
 	}
 
-	h, whichShard := cl.Shard(key)
+	h, whichShard := hashAndShard(key)
 	s := &cl.shards[whichShard]
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -87,8 +85,7 @@ func (cl *ClassLookup) Set(key string, val []string) {
 	s.data[h] = strings.Join(val, "\t")
 }
 
-func (cl *ClassLookup) Get(key string) ([]string, bool) {
-	h, whichShard := cl.Shard(key)
+func (cl *ClassLookup) Get(h uint64, whichShard uint) ([]string, bool) {
 	s := &cl.shards[whichShard]
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -218,7 +215,7 @@ func buildClassLookup(fileNames []string, nRoutines int) *ClassLookup {
 
 	cl := &ClassLookup{}
 	for i := range cl.shards {
-		cl.shards[i].data = map[[16]byte]string{}
+		cl.shards[i].data = map[uint64]string{}
 	}
 	n := len(fileNames)
 	bar := uiprogress.AddBar(n)
@@ -245,8 +242,12 @@ type SynonymRecord struct {
 }
 
 type CategoriesTable struct {
-	CategoryID uint32 `parquet:"CATEGORY_ID"`
-	Category   string `parquet:"CATEGORY_NAME"`
+	shards [nShards]struct {
+		rows []struct {
+			CategoryID uint32 `parquet:"CATEGORY_ID"`
+			Category   string `parquet:"CATEGORY_NAME"`
+		}
+	}
 }
 
 type CategoryMap struct {
@@ -278,24 +279,36 @@ func (cm *CategoryMap) ToTable() []CategoriesTable {
 }
 
 type SynonymsTable struct {
-	CurieID  uint32 `parquet:"CURIE_ID"`
-	SourceID uint8  `parquet:"SOURCE_ID"`
-	Synonym  string `parquet:"SYNONYM"`
+	shards [nShards]struct {
+		rows []struct {
+			CurieID  uint32 `parquet:"CURIE_ID"`
+			SourceID uint8  `parquet:"SOURCE_ID"`
+			Synonym  string `parquet:"SYNONYM"`
+		}
+	}
 }
 
 type CuriesTable struct {
-	CurieID       uint32 `parquet:"CURIE_ID"`
-	Curie         string `parquet:"CURIE"`
-	PreferredName string `parquet:"PREFERRED_NAME"`
-	CategoryID    uint32 `parquet:"CATEGORY_ID"`
-	Taxon         uint32 `parquet:"TAXON_ID,optional"`
+	shards [nShards]struct {
+		rows []struct {
+			CurieID       uint32 `parquet:"CURIE_ID"`
+			Curie         string `parquet:"CURIE"`
+			PreferredName string `parquet:"PREFERRED_NAME"`
+			CategoryID    uint32 `parquet:"CATEGORY_ID"`
+			Taxon         uint32 `parquet:"TAXON_ID,optional"`
+		}
+	}
 }
 
 type SourcesTable struct {
-	SourceID      uint8  `parquet:"SOURCE_ID"`
-	SourceName    string `parquet:"SOURCE_NAME"`
-	SourceVersion string `parquet:"SOURCE_VERSION"`
-	NLPLevel      uint8  `parquet:"NLP_LEVEL"`
+	shards [nShards]struct {
+		rows []struct {
+			SourceID      uint8  `parquet:"SOURCE_ID"`
+			SourceName    string `parquet:"SOURCE_NAME"`
+			SourceVersion string `parquet:"SOURCE_VERSION"`
+			NLPLevel      uint8  `parquet:"NLP_LEVEL"`
+		}
+	}
 }
 
 type ParquetTable interface {
@@ -309,20 +322,24 @@ func writeParquet[T ParquetTable](filePath string, table []T) {
 
 var parquetBaseDir string = "./.parquet-store/"
 
-func makeParquetName(fileName string, thing string, num int, workerID int) string {
+func makeParquetName(fileName string, thing string, fileNum int, shardNum int, workerID int) string {
 	base := filepath.Base(fileName)
 	stem := strings.TrimSuffix(base, "Synonyms.ndjson.zst")
 
-	return fmt.Sprintf("%v%v%v-%d-%d.parquet", parquetBaseDir, stem, thing, num, workerID)
+	return fmt.Sprintf("%v%v%v%d-%d-%d.parquet", parquetBaseDir, stem, thing, fileNum, shardNum, workerID)
 }
 
-func writeIfGtLen[T ParquetTable](fileName string, thing string, num int, workerID int, table []T, maxBatch int) (int, []T) {
-	if len(table) > maxBatch {
-		parquetName := makeParquetName(fileName, thing, num, workerID)
-		writeParquet(parquetName, table)
-		return num + 1, []T{}
+func writeIfGtLen[T ParquetTable](fileName string, thing string, fileNum int, shardNum int, workerID int, table T, maxBatch int) (int, T) {
+	for i := range nShards {
+		tableShard := table[i]
+		if len(tableShard) > maxBatch {
+			parquetName := makeParquetName(fileName, thing, fileNum, shardNum, workerID)
+			writeParquet(parquetName, table)
+			return fileNum + 1, []T{}
+		}
 	}
-	return num, table
+
+	return fileNum, table
 }
 
 func stringToInt(str string) int {
@@ -337,19 +354,12 @@ type CurieCounter struct {
 	counter atomic.Uint32
 	shards  [nShards]struct {
 		mu   sync.RWMutex
-		m    map[[16]byte]uint32
+		m    map[uint64]uint32
 		_pad [40]byte
 	}
 }
 
-func (cc *CurieCounter) Shard(curie string) ([16]byte, uint) {
-	h := computeMD5(curie)
-	whichShard := selectShard(h)
-	return h, whichShard
-}
-
-func (cc *CurieCounter) GetOrNext(curie string) uint32 {
-	h, whichShard := cc.Shard(curie)
+func (cc *CurieCounter) GetOrNext(h uint64, whichShard uint) uint32 {
 	s := &cc.shards[whichShard]
 
 	s.mu.RLock()
@@ -397,13 +407,15 @@ func processSynonymRecords(fileName string, workerID int, records <-chan Synonym
 		if isBadToken(curie) {
 			continue
 		}
-		curieID := cc.GetOrNext(curie)
+
+		h, whichShard := hashAndShard(curie)
+		curieID := cc.GetOrNext(h, whichShard)
 
 		synonyms := sr.Synonyms
 		synonyms = append(synonyms, curie)
 		cleaned := cleanAliases(synonyms)
 
-		if aliases, ok := cl.Get(curie); ok {
+		if aliases, ok := cl.Get(h, whichShard); ok {
 			cleaned = append(cleaned, aliases...)
 		}
 
@@ -522,7 +534,7 @@ func buildSynonymParquets(fileNames []string, cl *ClassLookup, nRoutines int) {
 
 	cc := CurieCounter{}
 	for i := range cc.shards {
-		cc.shards[i].m = map[[16]byte]uint32{}
+		cc.shards[i].m = map[uint64]uint32{}
 	}
 
 	n := len(fileNames)
@@ -602,6 +614,24 @@ func buildDuckDB(dbPath string) {
 	bar.Incr()
 }
 
+func mkDotFiles() {
+	totalDirs := int(nShards + 1)
+	bar := uiprogress.AddBar(totalDirs)
+	bar.AppendCompleted()
+	bar.PrependElapsed()
+
+	os.MkdirAll(parquetBaseDir, os.ModePerm)
+	bar.Incr()
+
+	for i := range nShards {
+		asStr := fmt.Sprintf("%d", i)
+		parquetShard := filepath.Join(parquetBaseDir, asStr)
+
+		os.MkdirAll(parquetShard, os.ModePerm)
+		bar.Incr()
+	}
+}
+
 var babelDir string
 var dbPath string
 var batchSize int
@@ -612,6 +642,8 @@ var synonymCPUFraction int
 func build(cmd *cobra.Command, args []string) {
 	uiprogress.Start()
 	defer uiprogress.Stop()
+
+	mkDotFiles()
 
 	cpuCount := runtime.NumCPU()
 
@@ -632,12 +664,10 @@ var buildCmd = &cobra.Command{
 }
 
 func init() {
-	os.MkdirAll(parquetBaseDir, os.ModePerm)
-
 	rootCmd.AddCommand(buildCmd)
 
 	buildCmd.Flags().StringVar(&babelDir, "babel-dir", "", "Directory containing Babel *Class.ndjson.zst and *Synonyms.ndjson.zst files.")
-	buildCmd.Flags().StringVar(&dbPath, "db-path", "./datassert.duckdb", "Output path for the DuckDB database.")
+	buildCmd.Flags().StringVar(&dbPath, "db-path", "./.datassert", "Output path for the DuckDB databases.")
 	buildCmd.Flags().IntVar(&batchSize, "batch-size", 1000000, "Number of records per Parquet batch.")
 	buildCmd.Flags().IntVar(&bufferSize, "buffer-size", 2048, "Size of the channel buffer used to process synonym files.")
 	buildCmd.Flags().IntVar(&classCPUFraction, "class-cpu-fraction", 2, "Fraction of CPU cores used to ingest Babel *Class.ndjson.zst files.")
