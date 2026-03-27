@@ -60,8 +60,8 @@ func selectShard(h uint64) uint {
 
 func hashAndShard(str string) (uint64, uint) {
 	h := computeXXHash(str)
-	whichShard := selectShard(h)
-	return h, whichShard
+	shardNum := selectShard(h)
+	return h, shardNum
 }
 
 type ClassLookup struct {
@@ -77,16 +77,16 @@ func (cl *ClassLookup) Set(key string, val []string) {
 		return
 	}
 
-	h, whichShard := hashAndShard(key)
-	s := &cl.shards[whichShard]
+	h, shardNum := hashAndShard(key)
+	s := &cl.shards[shardNum]
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.data[h] = strings.Join(val, "\t")
 }
 
-func (cl *ClassLookup) Get(h uint64, whichShard uint) ([]string, bool) {
-	s := &cl.shards[whichShard]
+func (cl *ClassLookup) Get(h uint64, shardNum uint) ([]string, bool) {
+	s := &cl.shards[shardNum]
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -217,8 +217,8 @@ func buildClassLookup(fileNames []string, nRoutines int) *ClassLookup {
 	for i := range cl.shards {
 		cl.shards[i].data = map[uint64]string{}
 	}
-	n := len(fileNames)
-	bar := uiprogress.AddBar(n)
+
+	bar := uiprogress.AddBar(len(fileNames))
 	bar.AppendCompleted()
 	bar.PrependElapsed()
 
@@ -247,9 +247,9 @@ type CategoriesTable struct {
 }
 
 type CategoryMap struct {
-	shards [nShards]struct {
-		m       sync.Map
-		counter atomic.Uint32
+	counter atomic.Uint32
+	shards  [nShards]struct {
+		m sync.Map
 	}
 }
 
@@ -262,7 +262,7 @@ func (cm *CategoryMap) GetOrAdd(category string) uint32 {
 	if val, ok := s.m.Load(category); ok {
 		return val.(uint32)
 	}
-	actual, _ := s.m.LoadOrStore(category, s.counter.Add(1))
+	actual, _ := s.m.LoadOrStore(category, cm.counter.Add(1))
 	return actual.(uint32)
 }
 
@@ -283,6 +283,7 @@ func (cm *CategoryMap) ToTables() [nShards][]CategoriesTable {
 			)
 		}
 
+		tempCategories[i] = categoryShard
 	}
 
 	return tempCategories
@@ -331,7 +332,7 @@ func writeIfGtLen[T ParquetTable](fileName string, thing string, fileNum int, sh
 	if len(tableShard) > maxBatch {
 		parquetName := makeParquetName(fileName, thing, fileNum, shardNum, workerID)
 		writeParquet(parquetName, tableShard)
-		return fileNum + 1, tableShard
+		return fileNum + 1, []T{}
 	}
 
 	return fileNum, tableShard
@@ -354,8 +355,8 @@ type CurieCounter struct {
 	}
 }
 
-func (cc *CurieCounter) GetOrNext(h uint64, whichShard uint) uint32 {
-	s := &cc.shards[whichShard]
+func (cc *CurieCounter) GetOrNext(h uint64, shardNum uint) uint32 {
+	s := &cc.shards[shardNum]
 
 	s.mu.RLock()
 	if curieID, ok := s.m[h]; ok {
@@ -403,14 +404,14 @@ func processSynonymRecords(fileName string, workerID int, records <-chan Synonym
 			continue
 		}
 
-		h, whichShard := hashAndShard(curie)
-		curieID := cc.GetOrNext(h, whichShard)
+		h, shardNum := hashAndShard(curie)
+		curieID := cc.GetOrNext(h, shardNum)
 
 		synonyms := sr.Synonyms
 		synonyms = append(synonyms, curie)
 		cleaned := cleanAliases(synonyms)
 
-		if aliases, ok := cl.Get(h, whichShard); ok {
+		if aliases, ok := cl.Get(h, shardNum); ok {
 			cleaned = append(cleaned, aliases...)
 		}
 
@@ -443,9 +444,8 @@ func processSynonymRecords(fileName string, workerID int, records <-chan Synonym
 			taxon = stringToInt(str)
 		}
 
-		curieShard := tempCuries[whichShard]
-		curieShard = append(
-			curieShard,
+		tempCuries[shardNum] = append(
+			tempCuries[shardNum],
 			CuriesTable{
 				CurieID:       curieID,
 				Curie:         curie,
@@ -455,7 +455,7 @@ func processSynonymRecords(fileName string, workerID int, records <-chan Synonym
 			},
 		)
 
-		curieNum, curieShard = writeIfGtLen(fileName, "Curies", curieNum, whichShard, workerID, curieShard, batchSize)
+		curieNum, tempCuries[shardNum] = writeIfGtLen(fileName, "Curies", curieNum, shardNum, workerID, tempCuries[shardNum], batchSize)
 
 		newSynonyms := []SynonymsTable{}
 		for _, synonym := range l0Synonyms {
@@ -479,9 +479,8 @@ func processSynonymRecords(fileName string, workerID int, records <-chan Synonym
 			)
 		}
 
-		synonymsShard := tempSynonyms[whichShard]
-		synonymsShard = append(synonymsShard, newSynonyms...)
-		synonymNum, synonymsShard = writeIfGtLen(fileName, "Synonyms", synonymNum, whichShard, workerID, synonymsShard, batchSize)
+		tempSynonyms[shardNum] = append(tempSynonyms[shardNum], newSynonyms...)
+		synonymNum, tempSynonyms[shardNum] = writeIfGtLen(fileName, "Synonyms", synonymNum, shardNum, workerID, tempSynonyms[shardNum], batchSize)
 	}
 
 	for i := range nShards {
@@ -537,8 +536,7 @@ func buildSynonymParquets(fileNames []string, cl *ClassLookup, nRoutines int) {
 		cc.shards[i].m = map[uint64]uint32{}
 	}
 
-	n := len(fileNames)
-	bar := uiprogress.AddBar(n)
+	bar := uiprogress.AddBar(len(fileNames))
 	bar.AppendCompleted()
 	bar.PrependElapsed()
 
@@ -572,9 +570,6 @@ var dbConfiguration []string = []string{
 }
 
 var indexOps []string = []string{
-	"INSERT INTO SYNONYMS_SORTED SELECT * FROM SYNONYMS ORDER BY SYNONYM;",
-	"DROP TABLE SYNONYMS;",
-	"ALTER TABLE SYNONYMS_SORTED RENAME TO SYNONYMS;",
 	"CREATE INDEX CURIE_SYNONYMS ON SYNONYMS (SYNONYM);",
 	"CREATE INDEX CATEGORY_NAMES ON CATEGORIES (CATEGORY_NAME);",
 	"CREATE INDEX CURIE_TAXON ON CURIES (TAXON_ID);",
@@ -588,52 +583,62 @@ func iterExecDB(db *sql.DB, queries []string) {
 	}
 }
 
-func buildDuckDB(dbPath string) {
-	db := getDB(dbPath)
+func makeDBPath(basePath string, shardNum uint) string {
+	return fmt.Sprintf("%v-%d.duckdb", basePath, shardNum)
+}
+
+func shardGlob(thing string, shardNum uint) string {
+	return fmt.Sprintf(".parquet-store/*%v*-%d-*.parquet", thing, shardNum)
+}
+
+func buildShardDB(basePath string, shardNum uint, bar *uiprogress.Bar) {
+	shardPath := makeDBPath(basePath, shardNum)
+	db := getDB(shardPath)
 	defer db.Close()
 
-	bar := uiprogress.AddBar(6)
-	bar.AppendCompleted()
-	bar.PrependElapsed()
-
 	iterExecDB(db, dbConfiguration)
-	bar.Incr()
 
-	_, err := db.Exec("CREATE TABLE SOURCES AS SELECT * FROM read_parquet('.parquet-store/*Sources-*.parquet')")
+	_, err := db.Exec(fmt.Sprintf(
+		"CREATE TABLE SOURCES AS SELECT * FROM read_parquet('%v')",
+		shardGlob("Sources", shardNum),
+	))
 	checkError(12, err)
-	bar.Incr()
 
-	_, err = db.Exec("CREATE TABLE CATEGORIES AS SELECT * FROM read_parquet('.parquet-store/*Categories-*.parquet') ORDER BY CATEGORY_NAME")
+	_, err = db.Exec(fmt.Sprintf(
+		"CREATE TABLE CATEGORIES AS SELECT * FROM read_parquet('%v') ORDER BY CATEGORY_NAME",
+		shardGlob("Categories", shardNum),
+	))
 	checkError(13, err)
-	bar.Incr()
 
-	_, err = db.Exec("CREATE TABLE CURIES AS SELECT * FROM read_parquet('.parquet-store/*Curies-*.parquet') ORDER BY TAXON_ID")
+	_, err = db.Exec(fmt.Sprintf(
+		"CREATE TABLE CURIES AS SELECT * FROM read_parquet('%v') ORDER BY TAXON_ID",
+		shardGlob("Curies", shardNum),
+	))
 	checkError(14, err)
 
-	_, err = db.Exec("CREATE TABLE SYNONYMS AS SELECT * FROM read_parquet('.parquet-store/*Synonyms-*.parquet') ORDER BY SYNONYM")
+	_, err = db.Exec(fmt.Sprintf(
+		"CREATE TABLE SYNONYMS AS SELECT * FROM read_parquet('%v') ORDER BY SYNONYM",
+		shardGlob("Synonyms", shardNum),
+	))
 	checkError(15, err)
-	bar.Incr()
 
 	iterExecDB(db, indexOps)
+
 	bar.Incr()
 }
 
-func mkDotFiles() {
-	totalDirs := int(nShards + 1)
-	bar := uiprogress.AddBar(totalDirs)
+func buildDuckDBs(basePath string) {
+	bar := uiprogress.AddBar(int(nShards))
 	bar.AppendCompleted()
 	bar.PrependElapsed()
 
-	os.MkdirAll(parquetBaseDir, os.ModePerm)
-	bar.Incr()
-
 	for i := range nShards {
-		asStr := fmt.Sprintf("%d", i)
-		parquetShard := filepath.Join(parquetBaseDir, asStr)
-
-		os.MkdirAll(parquetShard, os.ModePerm)
-		bar.Incr()
+		buildShardDB(basePath, i, bar)
 	}
+}
+
+func mkDotFiles() {
+	os.MkdirAll(parquetBaseDir, os.ModePerm)
 }
 
 var babelDir string
@@ -657,13 +662,13 @@ func build(cmd *cobra.Command, args []string) {
 	synonymFileNames := globFileNames(babelDir, "*Synonyms.ndjson.zst")
 	buildSynonymParquets(synonymFileNames, cl, (cpuCount / synonymCPUFraction))
 
-	buildDuckDB(dbPath)
+	buildDuckDBs(dbPath)
 }
 
 var buildCmd = &cobra.Command{
 	Use:   "build --babel-dir <dir>",
 	Short: "Build a DuckDB assertion database from Babel exports",
-	Long:  "Reads *Class.ndjson.zst and *Synonyms.ndjson.zst files from --babel-dir, writes staging parquet artifacts to ./.parquet-store/, and builds a DuckDB database at --db-path (default: ./datassert.duckdb).",
+	Long:  "Reads *Class.ndjson.zst and *Synonyms.ndjson.zst files from --babel-dir, writes staging parquet artifacts to ./.parquet-store/, and builds 20 sharded DuckDB databases at --db-path (default: ./datassert-{0..19}.duckdb).",
 	Run:   build,
 }
 
@@ -671,11 +676,11 @@ func init() {
 	rootCmd.AddCommand(buildCmd)
 
 	buildCmd.Flags().StringVar(&babelDir, "babel-dir", "", "Directory containing Babel *Class.ndjson.zst and *Synonyms.ndjson.zst files.")
-	buildCmd.Flags().StringVar(&dbPath, "db-path", "./.datassert", "Output path for the DuckDB databases.")
+	buildCmd.Flags().StringVar(&dbPath, "db-path", "./.datassert", "Base output path for the sharded DuckDB databases.")
 	buildCmd.Flags().IntVar(&batchSize, "batch-size", 1000000, "Number of records per Parquet batch.")
 	buildCmd.Flags().IntVar(&bufferSize, "buffer-size", 2048, "Size of the channel buffer used to process synonym files.")
 	buildCmd.Flags().IntVar(&classCPUFraction, "class-cpu-fraction", 2, "Fraction of CPU cores used to ingest Babel *Class.ndjson.zst files.")
-	buildCmd.Flags().IntVar(&classCPUFraction, "synonym-cpu-fraction", 4, "Fraction of CPU cores used to ingest Babel *Class.ndjson.zst files.")
+	buildCmd.Flags().IntVar(&synonymCPUFraction, "synonym-cpu-fraction", 4, "Fraction of CPU cores used to ingest Babel *Synonyms.ndjson.zst files.")
 
 	buildCmd.MarkFlagRequired("babel-dir")
 }
