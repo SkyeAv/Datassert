@@ -322,21 +322,24 @@ type CurieCounter struct {
 	counter atomic.Uint32
 	shards  [nShards]struct {
 		mu   sync.RWMutex
-		m    map[string]uint32
+		m    map[uint]uint32
 		_pad [40]byte
 	}
 }
 
-func (cc *CurieCounter) Shard(curie string) uint {
+func (cc *CurieCounter) Shard(curie string) (uint, uint) {
 	h := xxhash.Sum64String(curie)
-	return uint(h) % nShards
+	uintH := uint(h)
+	whichShard := uintH % nShards
+	return uintH, whichShard
 }
 
 func (cc *CurieCounter) GetOrNext(curie string) uint32 {
-	s := &cc.shards[cc.Shard(curie)]
+	h, whichShard := cc.Shard(curie)
+	s := &cc.shards[whichShard]
 
 	s.mu.RLock()
-	if curieID, ok := s.m[curie]; ok {
+	if curieID, ok := s.m[h]; ok {
 		s.mu.RUnlock()
 		return curieID
 	}
@@ -345,12 +348,12 @@ func (cc *CurieCounter) GetOrNext(curie string) uint32 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if curieID, ok := s.m[curie]; ok {
+	if curieID, ok := s.m[h]; ok {
 		return curieID
 	}
 
 	curieID := cc.counter.Add(1) - 1
-	s.m[curie] = curieID
+	s.m[h] = curieID
 	return curieID
 }
 
@@ -505,7 +508,7 @@ func buildSynonymParquets(fileNames []string, cl *ClassLookup, batchSize int, nR
 
 	cc := CurieCounter{}
 	for i := range cc.shards {
-		cc.shards[i].m = map[string]uint32{}
+		cc.shards[i].m = map[uint]uint32{}
 	}
 
 	n := len(fileNames)
