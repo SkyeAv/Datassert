@@ -316,8 +316,8 @@ func makeParquetName(fileName string, thing string, num int, workerID int) strin
 	return fmt.Sprintf("%v%v%v-%d-%d.parquet", parquetBaseDir, stem, thing, num, workerID)
 }
 
-func writeIfGtLen[T ParquetTable](fileName string, thing string, num int, workerID int, table []T, batchSize int) (int, []T) {
-	if len(table) > batchSize {
+func writeIfGtLen[T ParquetTable](fileName string, thing string, num int, workerID int, table []T, maxBatch int) (int, []T) {
+	if len(table) > maxBatch {
 		parquetName := makeParquetName(fileName, thing, num, workerID)
 		writeParquet(parquetName, table)
 		return num + 1, []T{}
@@ -385,7 +385,7 @@ func decodeRecord(records chan SynonymRecord, zr *zstd.Decoder) {
 	}
 }
 
-func processSynonymRecords(fileName string, workerID int, batchSize int, records <-chan SynonymRecord, cl *ClassLookup, cm *CategoryMap, cc *CurieCounter) {
+func processSynonymRecords(fileName string, workerID int, records <-chan SynonymRecord, cl *ClassLookup, cm *CategoryMap, cc *CurieCounter) {
 	tempCuries := []CuriesTable{}
 	tempSynonyms := []SynonymsTable{}
 
@@ -479,7 +479,7 @@ func processSynonymRecords(fileName string, workerID int, batchSize int, records
 	_, _ = writeIfGtLen(fileName, "Synonyms", synonymNum, workerID, tempSynonyms, 0)
 }
 
-func parseSynonymFile(fileName string, batchSize int, nRoutines int, bufferSize int, cl *ClassLookup, cm *CategoryMap, cc *CurieCounter, bar *uiprogress.Bar) {
+func parseSynonymFile(fileName string, nRoutines int, cl *ClassLookup, cm *CategoryMap, cc *CurieCounter, bar *uiprogress.Bar) {
 	f := yieldReader(fileName)
 	defer f.Close()
 
@@ -493,7 +493,7 @@ func parseSynonymFile(fileName string, batchSize int, nRoutines int, bufferSize 
 	g.SetLimit(nRoutines)
 	for w := range nRoutines {
 		g.Go(func() error {
-			processSynonymRecords(fileName, w, batchSize, records, cl, cm, cc)
+			processSynonymRecords(fileName, w, records, cl, cm, cc)
 			return nil
 		})
 	}
@@ -531,7 +531,7 @@ func buildSynonymParquets(fileNames []string, cl *ClassLookup, nRoutines int) {
 	bar.PrependElapsed()
 
 	for _, fileName := range fileNames {
-		parseSynonymFile(fileName, batchSize, nRoutines, bufferSize, cl, &cm, &cc, bar)
+		parseSynonymFile(fileName, nRoutines, cl, &cm, &cc, bar)
 	}
 
 	categoryParquet := makeParquetName("BiolinkSynonyms.ndjson.zst", "Categories", 1, 1)
