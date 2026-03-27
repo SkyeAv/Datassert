@@ -584,7 +584,7 @@ func iterExecDB(db *sql.DB, queries []string) {
 }
 
 func makeDBPath(basePath string, shardNum uint) string {
-	return fmt.Sprintf("%v-shard%d.duckdb", basePath, shardNum)
+	return fmt.Sprintf("%v/datassert-shard%d.duckdb", basePath, shardNum)
 }
 
 func shardGlob(thing string, shardNum uint) string {
@@ -627,26 +627,27 @@ func buildShardDB(basePath string, shardNum uint, bar *uiprogress.Bar) {
 	bar.Incr()
 }
 
-func buildDuckDBs(basePath string) {
+func buildDuckDBs() {
 	bar := uiprogress.AddBar(int(nShards))
 	bar.AppendCompleted()
 	bar.PrependElapsed()
 
 	for i := range nShards {
-		buildShardDB(basePath, i, bar)
+		buildShardDB(dbDir, i, bar)
 	}
 }
 
-func mkDotFiles() {
-	os.MkdirAll(parquetBaseDir, os.ModePerm)
-}
-
 var babelDir string
-var dbPath string
+var dbDir string
 var batchSize int
 var bufferSize int
 var classCPUFraction int
 var synonymCPUFraction int
+
+func mkDotFiles() {
+	os.MkdirAll(parquetBaseDir, os.ModePerm)
+	os.MkdirAll(dbDir, os.ModePerm)
+}
 
 func build(cmd *cobra.Command, args []string) {
 	uiprogress.Start()
@@ -662,7 +663,7 @@ func build(cmd *cobra.Command, args []string) {
 	synonymFileNames := globFileNames(babelDir, "*Synonyms.ndjson.zst")
 	buildSynonymParquets(synonymFileNames, cl, (cpuCount / synonymCPUFraction))
 
-	buildDuckDBs(dbPath)
+	buildDuckDBs()
 }
 
 var buildCmd = &cobra.Command{
@@ -676,7 +677,7 @@ func init() {
 	rootCmd.AddCommand(buildCmd)
 
 	buildCmd.Flags().StringVar(&babelDir, "babel-dir", "", "Directory containing Babel *Class.ndjson.zst and *Synonyms.ndjson.zst files.")
-	buildCmd.Flags().StringVar(&dbPath, "db-path", "./.datassert", "Base output path for the sharded DuckDB databases.")
+	buildCmd.Flags().StringVar(&dbDir, "db-dir", "./.datassert", "Base output path for the sharded DuckDB databases.")
 	buildCmd.Flags().IntVar(&batchSize, "batch-size", 50000, "Number of records per Parquet batch.")
 	buildCmd.Flags().IntVar(&bufferSize, "buffer-size", 2048, "Size of the channel buffer used to process synonym files.")
 	buildCmd.Flags().IntVar(&classCPUFraction, "class-cpu-fraction", 2, "Fraction of CPU cores used to ingest Babel *Class.ndjson.zst files.")
