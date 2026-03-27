@@ -458,7 +458,7 @@ func processSynonymRecords(fileName string, workerID int, records <-chan Synonym
 			},
 		)
 
-		curieNum, tempCuries[shardNum] = writeIfGtLen(fileName, "Curies", curieNum, shardNum, workerID, tempCuries[shardNum], batchSize)
+		curieNum, tempCuries[shardNum] = writeIfGtLen(fileName, "curies", curieNum, shardNum, workerID, tempCuries[shardNum], batchSize)
 
 		newSynonyms := []SynonymsTable{}
 		for _, synonym := range l0Synonyms {
@@ -483,12 +483,12 @@ func processSynonymRecords(fileName string, workerID int, records <-chan Synonym
 		}
 
 		tempSynonyms[shardNum] = append(tempSynonyms[shardNum], newSynonyms...)
-		synonymNum, tempSynonyms[shardNum] = writeIfGtLen(fileName, "Synonyms", synonymNum, shardNum, workerID, tempSynonyms[shardNum], batchSize)
+		synonymNum, tempSynonyms[shardNum] = writeIfGtLen(fileName, "synonyms", synonymNum, shardNum, workerID, tempSynonyms[shardNum], batchSize)
 	}
 
 	for i := range nShards {
-		_, _ = writeIfGtLen(fileName, "Curies", curieNum, i, workerID, tempCuries[i], 0)
-		_, _ = writeIfGtLen(fileName, "Synonyms", synonymNum, i, workerID, tempSynonyms[i], 0)
+		_, _ = writeIfGtLen(fileName, "curies", curieNum, i, workerID, tempCuries[i], 0)
+		_, _ = writeIfGtLen(fileName, "synonyms", synonymNum, i, workerID, tempSynonyms[i], 0)
 	}
 
 }
@@ -551,12 +551,12 @@ func buildSynonymParquets(fileNames []string, cl *ClassLookup, nRoutines int) {
 	}
 
 	for i, table := range cm.ToTables() {
-		categoryParquet := makeParquetName("BiolinkSynonyms.ndjson.zst", "Categories", 1, uint(i), 1)
+		categoryParquet := makeParquetName("BiolinkSynonyms.ndjson.zst", "categories", 1, uint(i), 1)
 		writeParquet(categoryParquet, table)
 	}
 
 	for i := range nShards {
-		sourceParquet := makeParquetName("BabelSynonyms.ndjson.zst", "Sources", 1, uint(i), 1)
+		sourceParquet := makeParquetName("BabelSynonyms.ndjson.zst", "sources", 1, uint(i), 1)
 		writeParquet(sourceParquet, sources)
 	}
 }
@@ -678,7 +678,7 @@ func build(cmd *cobra.Command, args []string) {
 var buildCmd = &cobra.Command{
 	Use:   "build --babel-dir <dir>",
 	Short: "Build a DuckDB assertion database from Babel exports",
-	Long:  "Reads *Class.ndjson.zst and *Synonyms.ndjson.zst files from --babel-dir, writes staging parquet artifacts to ./.parquet-store/, and builds 16 sharded DuckDB databases at --db-path (default: ./.datassert-shard{0..15}.duckdb).",
+	Long:  "Reads *Class.ndjson.zst and *Synonyms.ndjson.zst files from --babel-dir, writes staging parquet artifacts to ./.parquet-store/, and builds 16 sharded DuckDB databases at --db-path (default: ./.datassert/datassert-shard{0..15}.duckdb).",
 	Run:   build,
 }
 
