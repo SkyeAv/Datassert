@@ -656,7 +656,7 @@ var synonymCPUFraction int
 
 func mkDirs() string {
 	datassertDir := filepath.Join(dbDir, "datassert")
-	parquetSubDir := filepath.Join(datassertDir, ".parquet")
+	parquetSubDir := filepath.Join(datassertDir, ".parquets")
 	dataSubDir := filepath.Join(datassertDir, "data")
 
 	os.RemoveAll(datassertDir)
