@@ -44,25 +44,21 @@ Datassert/
 
 All application logic lives in `cmd/build.go`. The `cmd` package uses `package cmd`.
 
+## Pipeline Architecture
+
+The `build` command runs three sequential phases:
+
+1. **Class ingest** — Reads `*Class.ndjson.zst` files in parallel via `errgroup`. Builds a `ClassLookup` (sharded map of curie → aliases). Memory-only, no disk output.
+2. **Synonym processing** — Reads `*Synonyms.ndjson.zst` files sequentially. For each file, a producer goroutine decodes records into a buffered channel; N worker goroutines consume records, assign IDs via sharded atomic counters, and batch-flush to intermediate Parquet files via `writeIfGtLen`.
+3. **DuckDB assembly** — For each of 16 shards, reads the shard's Parquet glob into DuckDB tables, creates indexes, and runs `VACUUM ANALYZE`.
+
+Output directory structure: `<db-dir>/datassert/.parquets/` (staging) and `<db-dir>/datassert/data/{0..15}.duckdb`.
+
 ## Code Style
 
 ### Imports
 
-Standard library (alphabetical), blank line, third-party (alphabetical). Each import on its own line:
-
-```go
-import (
-	"database/sql"
-	"fmt"
-	"io"
-	"strings"
-	"sync"
-
-	"github.com/bytedance/sonic"
-	_ "github.com/duckdb/duckdb-go/v2"
-	"github.com/spf13/cobra"
-)
-```
+Standard library (alphabetical), blank line, third-party (alphabetical). Each import on its own line.
 
 ### Naming
 
@@ -76,11 +72,7 @@ import (
 
 ### Error Handling
 
-No `error` return values — use `checkError(code, err)` / `throwError(code, err)` with uint8 site codes, which call `log.Fatalf`. Do not introduce `error` return patterns.
-
-```go
-checkError(3, err)  // code identifies the call site
-```
+No `error` return values — use `checkError(code, err)` / `throwError(code, err)` with `uint8` site codes (0–15 range), which call `log.Fatalf`. Do not introduce `error` return patterns. Each call site gets a unique code; when adding new call sites, use the next available code.
 
 ### Struct Tags
 
@@ -89,57 +81,24 @@ checkError(3, err)  // code identifies the call site
 
 ### Concurrency
 
-**Sharded structures** — use `[nShards]` (16 shards) with per-shard mutexes and `_pad [40]byte` to avoid false sharing:
-
-```go
-shards [nShards]struct {
-    mu   sync.Mutex
-    m    map[uint64]uint32
-    _pad [40]byte
-}
-```
-
-**Bounded parallelism** — prefer `errgroup.Group` with `g.SetLimit(n)` over raw `sync.WaitGroup`.
-
-**Producer-consumer** — buffered channels with a goroutine that decodes into the channel and closes on EOF.
-
-**Lock-free maps** — `sync.Map` for read-heavy concurrent maps (e.g., `CategoryMap`).
-
-**Shared counters** — `atomic.Uint32`.
+- **Sharded structures** — `[nShards]` (16) with per-shard mutexes and `_pad [40]byte` to avoid false sharing. Initialize inner maps in a loop before use.
+- **Double-checked locking** — for read-heavy patterns (`CurieCounter.GetOrNext`), `RLock` fast-path then `Lock` slow-path with re-check.
+- **Bounded parallelism** — `errgroup.Group` with `g.SetLimit(n)` over raw `sync.WaitGroup`.
+- **Producer-consumer** — buffered channels; producer decodes into channel and closes on EOF.
+- **Lock-free maps** — `sync.Map` for read-heavy concurrent maps (e.g., `CategoryMap`).
+- **Shared counters** — `atomic.Uint32`.
 
 ### Resource Management
 
-Always `defer Close()` immediately after acquisition:
-
-```go
-f := yieldReader(fileName)
-defer f.Close()
-zr := yieldDecoder(f)
-defer zr.Close()
-```
+Always `defer Close()` immediately after acquisition (`yieldReader` → `yieldDecoder`).
 
 ### JSON Decoding
 
-Use `sonic.ConfigDefault.NewDecoder` for streaming:
-
-```go
-decoder := sonic.ConfigDefault.NewDecoder(reader)
-for {
-    var record RecordType
-    if err := decoder.Decode(&record); err == io.EOF { break }
-    checkError(code, err)
-}
-```
+Use `sonic.ConfigDefault.NewDecoder` for streaming with `io.EOF` break.
 
 ### Generics
 
-Constrain with the `ParquetTable` interface union:
-
-```go
-type ParquetTable interface {
-    CuriesTable | SynonymsTable | CategoriesTable | SourcesTable
-}
-```
+Constrain with the `ParquetTable` interface union (`CuriesTable | SynonymsTable | CategoriesTable | SourcesTable`). Generic functions like `writeParquet[T]` and `writeIfGtLen[T]` operate across all table types.
 
 ### Cobra CLI
 
@@ -147,7 +106,11 @@ Package-level command var, `init()` for registration and flags, `MarkFlagRequire
 
 ### Hashing & Sharding
 
-All sharding uses `xxhash.Sum64` modulo `nShards` (16). Use `hashAndShard` helper.
+All sharding uses `xxhash.Sum64` modulo `nShards` (16). Use `hashAndShard` helper which returns both the hash and shard number.
+
+### Parquet File Naming
+
+Intermediate Parquet files: `<stem>-<thing>:<fileNum>-<shardNum>:<workerID>.parquet` in the `.parquets/` staging directory.
 
 ### DuckDB
 
