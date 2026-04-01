@@ -461,30 +461,30 @@ func processSynonymRecords(datassertDir string, fileName string, workerID int, r
 
 		curieNum, tempCuries[shardNum] = writeIfGtLen(datassertDir, fileName, "curies", curieNum, shardNum, workerID, tempCuries[shardNum], batchSize)
 
-		newSynonyms := []SynonymsTable{}
 		for _, synonym := range l0Synonyms {
-			newSynonyms = append(
-				newSynonyms,
+			_, termShardNum := hashAndShard(synonym)
+			tempSynonyms[termShardNum] = append(
+				tempSynonyms[termShardNum],
 				SynonymsTable{
 					CurieID:  curieID,
 					Synonym:  synonym,
 					SourceID: uint8(0),
 				},
 			)
+			synonymNum, tempSynonyms[termShardNum] = writeIfGtLen(datassertDir, fileName, "synonyms", synonymNum, termShardNum, workerID, tempSynonyms[termShardNum], batchSize)
 		}
 		for _, synonym := range l1Synonyms {
-			newSynonyms = append(
-				newSynonyms,
+			_, termShardNum := hashAndShard(synonym)
+			tempSynonyms[termShardNum] = append(
+				tempSynonyms[termShardNum],
 				SynonymsTable{
 					CurieID:  curieID,
 					Synonym:  synonym,
 					SourceID: uint8(1),
 				},
 			)
+			synonymNum, tempSynonyms[termShardNum] = writeIfGtLen(datassertDir, fileName, "synonyms", synonymNum, termShardNum, workerID, tempSynonyms[termShardNum], batchSize)
 		}
-
-		tempSynonyms[shardNum] = append(tempSynonyms[shardNum], newSynonyms...)
-		synonymNum, tempSynonyms[shardNum] = writeIfGtLen(datassertDir, fileName, "synonyms", synonymNum, shardNum, workerID, tempSynonyms[shardNum], batchSize)
 	}
 
 	for i := range nShards {
