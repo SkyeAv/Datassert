@@ -607,25 +607,25 @@ func buildShardDB(datassertDir string, shardNum uint, bar *uiprogress.Bar) {
 
 	_, err := db.Exec(fmt.Sprintf(
 		"CREATE TABLE SOURCES AS SELECT * FROM read_parquet('%v')",
-		shardGlob(datassertDir, "Sources", shardNum),
+		shardGlob(datassertDir, "sources", shardNum),
 	))
 	checkError(12, err)
 
 	_, err = db.Exec(fmt.Sprintf(
 		"CREATE TABLE CATEGORIES AS SELECT * FROM read_parquet('%v') ORDER BY CATEGORY_NAME",
-		shardGlob(datassertDir, "Categories", shardNum),
+		shardGlob(datassertDir, "categories", shardNum),
 	))
 	checkError(13, err)
 
 	_, err = db.Exec(fmt.Sprintf(
 		"CREATE TABLE CURIES AS SELECT * FROM read_parquet('%v') ORDER BY TAXON_ID",
-		shardGlob(datassertDir, "Curies", shardNum),
+		shardGlob(datassertDir, "curies", shardNum),
 	))
 	checkError(14, err)
 
 	_, err = db.Exec(fmt.Sprintf(
 		"CREATE TABLE SYNONYMS AS SELECT * FROM read_parquet('%v') ORDER BY SYNONYM",
-		shardGlob(datassertDir, "Synonyms", shardNum),
+		shardGlob(datassertDir, "synonyms", shardNum),
 	))
 	checkError(15, err)
 
@@ -686,7 +686,7 @@ func build(cmd *cobra.Command, args []string) {
 var buildCmd = &cobra.Command{
 	Use:   "build --babel-dir <dir>",
 	Short: "Build a DuckDB assertion database from Babel exports",
-	Long:  "Reads *Class.ndjson.zst and *Synonyms.ndjson.zst files from --babel-dir, writes staging parquet artifacts to ./.parquet-store/, and builds 16 sharded DuckDB databases at --db-path (default: ./.datassert/datassert-shard{0..15}.duckdb).",
+	Long:  "Reads *Class.ndjson.zst and *Synonyms.ndjson.zst files from --babel-dir, writes staging Parquet artifacts to <db-dir>/datassert/.parquets/, and builds 16 sharded DuckDB databases at <db-dir>/datassert/data/{0..15}.duckdb (default --db-dir: current directory).",
 	Run:   build,
 }
 
