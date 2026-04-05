@@ -635,6 +635,7 @@ func getBABELFiles(version string, endpoints []string, dataRegex *regexp.Regexp)
 			url := fmt.Sprintf("%v/%v", downloads, filename)
 
 			filename = filepath.Base(filename)
+			filename = strings.ToLower(filename)
 			babelFiles = append(babelFiles, [2]string{filename, url})
 		}
 	}
