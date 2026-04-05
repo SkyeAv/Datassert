@@ -659,7 +659,7 @@ func downloadBABEL(version string, endpoints []string, dest string, dataRegex *r
 	babelFiles := getBABELFiles(version, endpoints, dataRegex)
 
 	fmt.Println("-----")
-	fmt.Printf("Downloading BABEL Files To %v:", dest)
+	fmt.Printf("Downloading BABEL Files To '%v' : \n", dest)
 	fmt.Println("-----")
 	fmt.Println("")
 
