@@ -582,6 +582,8 @@ func downloadAndSplit(filename string, url string, dest string) error {
 	var count uint = 1
 	var chunk uint = 1
 	scanner := bufio.NewScanner(gz)
+	// increased the buffer to 10MB bc 64KB was too small and errored
+	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
 
 	out, err := nextOpenChunk(filename, chunk, dest)
 	if err != nil {
