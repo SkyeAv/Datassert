@@ -606,7 +606,7 @@ func downloadAndSplit(filename string, url string, dest string) error {
 
 const renci string = "https://stars.renci.org/var/babel_outputs"
 
-var dataRegex *regexp.Regexp = regexp.MustCompile(`^<a href="(.*?)\.gz$"`)
+var dataRegex *regexp.Regexp = regexp.MustCompile(`<a href="([^"]+\.gz)"`)
 
 func getBABELFiles(version string, endpoints []string) [][2]string {
 	var babelFiles [][2]string = [][2]string{}
