@@ -518,9 +518,11 @@ func buildInMemoryLookup() *lookup {
 }
 
 func swapExt(path string, newExt string) string {
-	ext := filepath.Ext(path)
+	protoExt := filepath.Ext(path)
+	protostem := strings.TrimSuffix(path, protoExt)
 
-	stem := strings.TrimSuffix(path, ext)
+	ext := filepath.Ext(protostem)
+	stem := strings.TrimSuffix(protostem, ext)
 	return stem + newExt
 }
 
