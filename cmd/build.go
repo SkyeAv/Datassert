@@ -411,7 +411,7 @@ func qcMultipleTokens(tokens []string, level int) []string {
 	return passed
 }
 
-const shards uint = 6
+const shards uint = 12
 
 func getShard(s string) (uint, uint64) {
 	h := xxhash.Sum64String(s)
