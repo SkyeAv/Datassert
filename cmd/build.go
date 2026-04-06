@@ -357,7 +357,7 @@ func clean(token string) string {
 	cleaned := strings.TrimSpace(token)
 	if token != cleaned {
 		return clean(cleaned)
-	} else if len(cleaned) > 2 {
+	} else if len(cleaned) <= 2 {
 		return cleaned
 	} else if cleaned[:2] == `""` || cleaned[:2] == `''` {
 		return clean(cleaned[2:])
@@ -366,7 +366,7 @@ func clean(token string) string {
 	lastItem := len(cleaned) - 1
 	if cleaned[:1] == `'` && cleaned[lastItem:] == `'` {
 		return clean(cleaned[1:lastItem])
-	} else if cleaned[:1] == `"` && cleaned[:lastItem] == `"` {
+	} else if cleaned[:1] == `"` && cleaned[lastItem:] == `"` {
 		return clean(cleaned[1:lastItem])
 	}
 
