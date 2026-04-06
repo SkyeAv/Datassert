@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -203,7 +204,7 @@ var hardcodedSources []sourcesSchema = []sourcesSchema{
 	{SourceID: 2, SourceName: "BABEL", SourceVersion: version, NLPLevel: 2},
 }
 
-func buildIntermediateParquets(l *lookup) {
+func buildIntermediateParquets(l *lookup, maxCPUs int) {
 	synonymFiles, err := filepath.Glob(fmt.Sprintf("%v/*.ndjson.lz4", synonyms))
 	if err != nil {
 		log.Fatal(err)
@@ -226,6 +227,7 @@ func buildIntermediateParquets(l *lookup) {
 	}
 
 	g := &errgroup.Group{}
+	g.SetLimit(maxCPUs)
 	for _, file := range synonymFiles {
 		g.Go(func() error {
 			f, err := os.Open(file)
@@ -454,7 +456,7 @@ type classJSON struct {
 	EquivalentIdentifiers []string `json:"equivalent_identifiers"`
 }
 
-func buildInMemoryLookup() *lookup {
+func buildInMemoryLookup(maxCPUs int) *lookup {
 	classFiles, err := filepath.Glob(fmt.Sprintf("%v/*.ndjson.lz4", classes))
 	if err != nil {
 		log.Fatal(err)
@@ -475,6 +477,7 @@ func buildInMemoryLookup() *lookup {
 	}
 
 	g := &errgroup.Group{}
+	g.SetLimit(maxCPUs)
 	for _, file := range classFiles {
 		g.Go(func() error {
 			f, err := os.Open(file)
@@ -745,12 +748,15 @@ func build(cmd *cobra.Command, args []string) {
 		downloadBABEL(version, synonymEndpoints, synonyms, synonymRegex)
 	}
 
+	// get max cpus to use for parallelism
+	maxCPUs := runtime.NumCPU() * 4 / 5
+
 	if !useExistingParquets {
 		// build in memory lookup
-		l := buildInMemoryLookup()
+		l := buildInMemoryLookup(maxCPUs)
 
 		// build intermediate parquets
-		buildIntermediateParquets(l)
+		buildIntermediateParquets(l, maxCPUs)
 	}
 
 	// generate duckdb databases
