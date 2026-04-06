@@ -43,13 +43,11 @@ var indexes []string = []string{
 }
 
 func generateDuckDBs() {
-	fmt.Println("-----")
-	fmt.Println("Generating DuckDB Databases:")
-	fmt.Println("-----")
-	fmt.Println("")
-
 	bar := uiprogress.AddBar(int(shards))
 	bar.PrependElapsed()
+	bar.PrependFunc(func(b *uiprogress.Bar) string {
+		return "Generating DuckDB Databases:"
+	})
 	bar.AppendCompleted()
 
 	for shard := range shards {
@@ -210,13 +208,11 @@ func buildIntermediateParquets(l *lookup, maxCPUs int) {
 		log.Fatal(err)
 	}
 
-	fmt.Println("-----")
-	fmt.Println("Building Intermediate Parquets:")
-	fmt.Println("-----")
-	fmt.Println("")
-
 	bar := uiprogress.AddBar(len(synonymFiles))
 	bar.PrependElapsed()
+	bar.PrependFunc(func(b *uiprogress.Bar) string {
+		return "Building Intermediate Parquets:"
+	})
 	bar.AppendCompleted()
 
 	var c *categoryCounter = &categoryCounter{}
@@ -462,13 +458,11 @@ func buildInMemoryLookup(maxCPUs int) *lookup {
 		log.Fatal(err)
 	}
 
-	fmt.Println("-----")
-	fmt.Println("Building In Memory Lookup:")
-	fmt.Println("-----")
-	fmt.Println("")
-
 	bar := uiprogress.AddBar(len(classFiles))
 	bar.PrependElapsed()
+	bar.PrependFunc(func(b *uiprogress.Bar) string {
+		return "Building In Memory Lookup:"
+	})
 	bar.AppendCompleted()
 
 	var l *lookup = &lookup{}
@@ -664,13 +658,11 @@ var synonymEndpoints []string = []string{
 func downloadBABEL(version string, endpoints []string, dest string, dataRegex *regexp.Regexp) {
 	babelFiles := getBABELFiles(version, endpoints, dataRegex)
 
-	fmt.Println("-----")
-	fmt.Printf("Downloading BABEL Files To '%v' : \n", dest)
-	fmt.Println("-----")
-	fmt.Println("")
-
 	bar := uiprogress.AddBar(len(babelFiles))
 	bar.PrependElapsed()
+	bar.PrependFunc(func(b *uiprogress.Bar) string {
+		return fmt.Sprintf("Downloading BABEL Files To '%v' : \n", dest)
+	})
 	bar.AppendCompleted()
 
 	for _, fileInfo := range babelFiles {
