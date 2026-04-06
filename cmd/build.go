@@ -73,19 +73,19 @@ func generateDuckDBs() {
 			log.Fatal(err)
 		}
 
-		categoriesQuery := fmt.Sprintf("CREATE TABLE CATEGORIES AS SELECT DISTINCT ON (CURIE, CURIE_ID) * FROM read_parquet('%v/*.categories.parquet') ORDER BY CATEGORY_NAME;", shardPath)
+		categoriesQuery := fmt.Sprintf("CREATE TABLE CATEGORIES AS SELECT * FROM read_parquet('%v/*.categories.parquet') ORDER BY CATEGORY_NAME;", shardPath)
 		_, err = db.Exec(categoriesQuery)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		curiesQuery := fmt.Sprintf("CREATE TABLE CURIES AS SELECT DISTINCT * FROM read_parquet('%v/*.curies.parquet') ORDER BY TAXON_ID;", shardPath)
+		curiesQuery := fmt.Sprintf("CREATE TABLE CURIES AS SELECT DISTINCT ON (CURIE) * FROM read_parquet('%v/*.curies.parquet') ORDER BY CURIE, CURIE_ID ASC, TAXON_ID;", shardPath)
 		_, err = db.Exec(curiesQuery)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		synonymsQuery := fmt.Sprintf("CREATE TABLE SYNONYMS AS SELECT DISTINCT ON (SYNONYM, CURIE_ID) * FROM read_parquet('%v/*.synonyms.parquet') ORDER BY SYNONYM, CURIE_ID, SOURCE_ID;", shardPath)
+		synonymsQuery := fmt.Sprintf("CREATE TABLE SYNONYMS AS SELECT DISTINCT ON (SYNONYM) * FROM read_parquet('%v/*.synonyms.parquet') ORDER BY SYNONYM, CURIE_ID ASC, SOURCE_ID;", shardPath)
 		_, err = db.Exec(synonymsQuery)
 		if err != nil {
 			log.Fatal(err)
@@ -741,7 +741,7 @@ func build(cmd *cobra.Command, args []string) {
 	}
 
 	// get max cpus to use for parallelism
-	maxCPUs := runtime.NumCPU() * 4 / 5
+	maxCPUs := runtime.NumCPU() * 9 / 10
 
 	if !useExistingParquets {
 		// build in memory lookup
