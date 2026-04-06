@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/bytedance/sonic"
 	"github.com/cespare/xxhash/v2"
@@ -569,25 +570,25 @@ const maxRecords uint = 50000
 func downloadAndSplit(filename string, url string, dest string) error {
 	resp, err := http.Get(url)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer resp.Body.Close()
 
 	gz, err := gzip.NewReader(resp.Body)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	defer gz.Close()
 
 	var count uint = 1
 	var chunk uint = 1
 	scanner := bufio.NewScanner(gz)
-	// increased the buffer to 10MB bc 64KB was too small and errored
-	scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
+	// increased the buffer to 1MB bc 64KB was too small and errored
+	scanner.Buffer(make([]byte, 0, 1024*1024), 1*1024*1024)
 
 	out, err := nextOpenChunk(filename, chunk, dest)
 	if err != nil {
-		log.Fatal(err)
+		return err
 	}
 	chunk++
 
@@ -597,13 +598,13 @@ func downloadAndSplit(filename string, url string, dest string) error {
 
 			out, err = nextOpenChunk(filename, chunk, dest)
 			if err != nil {
-				log.Fatal(err)
+				return err
 			}
 			chunk++
 		}
 
 		if _, err := fmt.Fprintln(out, scanner.Text()); err != nil {
-			log.Fatal(err)
+			return err
 		}
 		count++
 	}
@@ -673,7 +674,24 @@ func downloadBABEL(version string, endpoints []string, dest string, dataRegex *r
 		filename := fileInfo[0]
 		url := fileInfo[1]
 
-		err := downloadAndSplit(filename, url, dest)
+		var err error
+		var maxAttempts int = 3
+
+		for range maxAttempts {
+			err = downloadAndSplit(filename, url, dest)
+			if err == nil {
+				break
+			}
+
+			fileDownloadPattern := swapExt(filename, "*.ndjson.lz4")
+			partiallyDownloadedFiles, _ := filepath.Glob(fmt.Sprintf("%v/%v", dest, fileDownloadPattern))
+			for _, file := range partiallyDownloadedFiles {
+				os.RemoveAll(file)
+			}
+
+			time.Sleep(10 * time.Second)
+		}
+
 		if err != nil {
 			log.Fatal(err)
 		}
