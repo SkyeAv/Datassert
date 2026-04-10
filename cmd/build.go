@@ -247,16 +247,16 @@ func buildIntermediateParquets(l *lookup, maxCPUs int) {
 					continue
 				}
 
-				shard, h := getShard(curie)
-				curID := u.GetCount(shard, h)
+				curieShard, h := getShard(curie)
+				curID := u.GetCount(curieShard, h)
 
 				preferred := sj.PreferredName
 				preferred = clean(preferred)
 
 				category := sj.Categories[0]
 
-				shard, _ = getShard(category)
-				catID := c.GetCount(shard, category)
+				categoryShard, _ := getShard(category)
+				catID := c.GetCount(categoryShard, category)
 
 				taxID := 0
 				if len(sj.Taxon) > 0 {
@@ -274,7 +274,7 @@ func buildIntermediateParquets(l *lookup, maxCPUs int) {
 				aliases := sj.Synonyms
 				aliases = qcMultipleTokens(aliases, 1)
 
-				if equiv, ok := l.Get(shard, h); ok {
+				if equiv, ok := l.Get(curieShard, h); ok {
 					aliases = append(aliases, equiv...)
 				}
 
