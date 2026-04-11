@@ -406,7 +406,7 @@ func qcMultipleTokens(tokens []string, level int) []string {
 	return passed
 }
 
-const shards uint = 12
+const shards uint = 16
 
 func getShard(s string) (uint, uint64) {
 	h := xxhash.Sum64String(s)
@@ -665,7 +665,7 @@ func downloadBABEL(version string, endpoints []string, dest string, dataRegex *r
 		url := fileInfo[1]
 
 		var err error
-		var maxAttempts int = 3
+		var maxAttempts int = 5
 
 		for range maxAttempts {
 			err = downloadAndSplit(filename, url, dest)
@@ -679,7 +679,7 @@ func downloadBABEL(version string, endpoints []string, dest string, dataRegex *r
 				os.RemoveAll(file)
 			}
 
-			time.Sleep(10 * time.Second)
+			time.Sleep(5 * time.Second)
 		}
 
 		if err != nil {
