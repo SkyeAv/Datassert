@@ -80,38 +80,14 @@ func generateDuckDBs() {
 			log.Fatal(err)
 		}
 
-		curiesQuery := fmt.Sprintf("CREATE TABLE CURIES_RAW AS SELECT * FROM read_parquet('%v/*.curies.parquet');", shardPath)
+		curiesQuery := fmt.Sprintf("CREATE TABLE CURIES AS SELECT DISTINCT ON (CURIE_ID) * FROM read_parquet('%v/*.curies.parquet') ORDER BY CURIE, CURIE_ID ASC, TAXON_ID;", shardPath)
 		_, err = db.Exec(curiesQuery)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		curieSort := "CREATE TABLE CURIES AS SELECT DISTINCT ON (CURIE_ID) * FROM CURIES_RAW ORDER BY CURIE, CURIE_ID ASC, TAXON_ID;"
-		_, err = db.Exec(curieSort)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		curieCleanup := "DROP TABLE CURIES_RAW;"
-		_, err = db.Exec(curieCleanup)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		synonymsQuery := fmt.Sprintf("CREATE TABLE SYNONYMS_RAW AS SELECT * FROM read_parquet('%v/*.synonyms.parquet');", shardPath)
+		synonymsQuery := fmt.Sprintf("CREATE TABLE SYNONYMS AS SELECT DISTINCT ON (SYNONYM, CURIE_ID) * FROM read_parquet('%v/*.synonyms.parquet') ORDER BY SYNONYM, CURIE_ID ASC, SOURCE_ID;", shardPath)
 		_, err = db.Exec(synonymsQuery)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		synonymSort := "CREATE TABLE SYNONYMS AS SELECT DISTINCT ON (SYNONYM, CURIE_ID) * FROM SYNONYMS_RAW ORDER BY SYNONYM, CURIE_ID ASC, SOURCE_ID;"
-		_, err = db.Exec(synonymSort)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		synonymCleanup := "DROP TABLE SYNONYMS_RAW;"
-		_, err = db.Exec(synonymCleanup)
 		if err != nil {
 			log.Fatal(err)
 		}
