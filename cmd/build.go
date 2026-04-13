@@ -80,13 +80,13 @@ func generateDuckDBs() {
 			log.Fatal(err)
 		}
 
-		curiesQuery := fmt.Sprintf("CREATE TABLE CURIES AS SELECT DISTINCT ON (CURIE_ID) * FROM read_parquet('%v/*.curies.parquet') ORDER BY CURIE, CURIE_ID ASC, TAXON_ID;", shardPath)
+		curiesQuery := fmt.Sprintf("CREATE TABLE CURIES AS SELECT CURIE_ID, MIN(CURIE) AS CURIE, MIN(PREFERRED_NAME) AS PREFERRED_NAME, MIN(CATEGORY_ID) AS CATEGORY_ID, MIN(TAXON_ID) AS TAXON_ID FROM read_parquet('%v/*.curies.parquet') GROUP BY CURIE_ID;", shardPath)
 		_, err = db.Exec(curiesQuery)
 		if err != nil {
 			log.Fatal(err)
 		}
 
-		synonymsQuery := fmt.Sprintf("CREATE TABLE SYNONYMS AS SELECT DISTINCT ON (SYNONYM, CURIE_ID) * FROM read_parquet('%v/*.synonyms.parquet') ORDER BY SYNONYM, CURIE_ID ASC, SOURCE_ID;", shardPath)
+		synonymsQuery := fmt.Sprintf("CREATE TABLE SYNONYMS AS SELECT CURIE_ID, MIN(SOURCE_ID) AS SOURCE_ID, SYNONYM FROM read_parquet('%v/*.synonyms.parquet') GROUP BY SYNONYM, CURIE_ID;", shardPath)
 		_, err = db.Exec(synonymsQuery)
 		if err != nil {
 			log.Fatal(err)
