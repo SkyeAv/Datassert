@@ -755,7 +755,7 @@ func build(cmd *cobra.Command, args []string) {
 	// build required directories
 	initializer()
 
-	if !skipDownloads || useExistingParquets {
+	if !skipDownloads && !useExistingParquets {
 		// download classes and endpoints from BABEL
 		downloadBABEL(version, classEndpoints, classes, classRegex)
 		downloadBABEL(version, synonymEndpoints, synonyms, synonymRegex)
@@ -789,5 +789,4 @@ func init() {
 	rootCmd.AddCommand(buildCmd)
 	buildCmd.Flags().BoolVarP(&skipDownloads, "skip-downloads", "s", false, "Skip the BABEL Download")
 	buildCmd.Flags().BoolVarP(&useExistingParquets, "use-existing-parquets", "p", false, "Use Existing Parquets To Build Another DuckDB Database")
-
 }
