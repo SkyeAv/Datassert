@@ -30,7 +30,7 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-var parallelBuilds int = int(shards) / 2
+var parallelBuilds int = int(shards) / 4
 
 var configuration []string = []string{
 	fmt.Sprintf("SET memory_limit = '%vGB';", 128/parallelBuilds),
