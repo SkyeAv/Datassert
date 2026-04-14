@@ -30,13 +30,10 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-var parallelBuilds int = int(shards) / 8
-
 var configuration []string = []string{
-	fmt.Sprintf("SET memory_limit = '%vGB';", 100/parallelBuilds),
-	fmt.Sprintf("SET threads = %d;", maxCPUs/parallelBuilds),
 	fmt.Sprintf("SET temp_directory = '%v';", os.TempDir()),
 	"SET preserve_insertion_order = false;",
+	"SET memory_limit = '100GB';",
 }
 
 var indexes []string = []string{
@@ -54,64 +51,56 @@ func generateDuckDBs() {
 	})
 	bar.AppendCompleted()
 
-	g := &errgroup.Group{}
-	g.SetLimit(parallelBuilds)
-
 	for shard := range shards {
-		g.Go(func() error {
-			duckDBPath := fmt.Sprintf("%v/%d.duckdb", data, shard)
-			shardPath := fmt.Sprintf("%v/%d", parquets, shard)
+		duckDBPath := fmt.Sprintf("%v/%d.duckdb", data, shard)
+		shardPath := fmt.Sprintf("%v/%d", parquets, shard)
 
-			db, err := sql.Open("duckdb", duckDBPath)
+		db, err := sql.Open("duckdb", duckDBPath)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		for _, instruction := range configuration {
+			_, err := db.Exec(instruction)
 			if err != nil {
 				log.Fatal(err)
 			}
+		}
 
-			for _, instruction := range configuration {
-				_, err := db.Exec(instruction)
-				if err != nil {
-					log.Fatal(err)
-				}
-			}
+		sourcesQuery := fmt.Sprintf("CREATE TABLE SOURCES AS SELECT * FROM read_parquet('%v/*.sources.parquet');", shardPath)
+		_, err = db.Exec(sourcesQuery)
+		if err != nil {
+			log.Fatal(err)
+		}
 
-			sourcesQuery := fmt.Sprintf("CREATE TABLE SOURCES AS SELECT * FROM read_parquet('%v/*.sources.parquet');", shardPath)
-			_, err = db.Exec(sourcesQuery)
+		categoriesQuery := fmt.Sprintf("CREATE TABLE CATEGORIES AS SELECT * FROM read_parquet('%v/*.categories.parquet') ORDER BY CATEGORY_NAME;", shardPath)
+		_, err = db.Exec(categoriesQuery)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		curiesQuery := fmt.Sprintf("CREATE TABLE CURIES AS SELECT CURIE_ID, MIN(CURIE) AS CURIE, MIN(PREFERRED_NAME) AS PREFERRED_NAME, MIN(CATEGORY_ID) AS CATEGORY_ID, MIN(TAXON_ID) AS TAXON_ID FROM read_parquet('%v/*.curies.parquet') GROUP BY CURIE_ID;", shardPath)
+		_, err = db.Exec(curiesQuery)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		synonymsQuery := fmt.Sprintf("CREATE TABLE SYNONYMS AS SELECT CURIE_ID, MIN(SOURCE_ID) AS SOURCE_ID, SYNONYM FROM read_parquet('%v/*.synonyms.parquet') GROUP BY SYNONYM, CURIE_ID;", shardPath)
+		_, err = db.Exec(synonymsQuery)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		for _, index := range indexes {
+			_, err := db.Exec(index)
 			if err != nil {
 				log.Fatal(err)
 			}
+		}
 
-			categoriesQuery := fmt.Sprintf("CREATE TABLE CATEGORIES AS SELECT * FROM read_parquet('%v/*.categories.parquet') ORDER BY CATEGORY_NAME;", shardPath)
-			_, err = db.Exec(categoriesQuery)
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			curiesQuery := fmt.Sprintf("CREATE TABLE CURIES AS SELECT CURIE_ID, MIN(CURIE) AS CURIE, MIN(PREFERRED_NAME) AS PREFERRED_NAME, MIN(CATEGORY_ID) AS CATEGORY_ID, MIN(TAXON_ID) AS TAXON_ID FROM read_parquet('%v/*.curies.parquet') GROUP BY CURIE_ID;", shardPath)
-			_, err = db.Exec(curiesQuery)
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			synonymsQuery := fmt.Sprintf("CREATE TABLE SYNONYMS AS SELECT CURIE_ID, MIN(SOURCE_ID) AS SOURCE_ID, SYNONYM FROM read_parquet('%v/*.synonyms.parquet') GROUP BY SYNONYM, CURIE_ID;", shardPath)
-			_, err = db.Exec(synonymsQuery)
-			if err != nil {
-				log.Fatal(err)
-			}
-
-			for _, index := range indexes {
-				_, err := db.Exec(index)
-				if err != nil {
-					log.Fatal(err)
-				}
-			}
-
-			db.Close()
-			bar.Incr()
-			return nil
-		})
+		db.Close()
+		bar.Incr()
 	}
-
-	g.Wait()
 }
 
 type curieCounter struct {
