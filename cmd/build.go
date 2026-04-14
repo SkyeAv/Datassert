@@ -30,17 +30,22 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
+var parallelBuilds int = int(shards) / 2
+
 var configuration []string = []string{
-	fmt.Sprintf("SET temp_directory = '%v'", os.TempDir()),
+	fmt.Sprintf("SET memory_limit = '%vGB';", 120/parallelBuilds),
+	fmt.Sprintf("SET threads = %d;", maxCPUs/parallelBuilds),
+	fmt.Sprintf("SET temp_directory = '%v';", os.TempDir()),
 	"SET preserve_insertion_order = false;",
-	"SET memory_limit = '100GB';",
 }
 
 var indexes []string = []string{
 	"CREATE INDEX CURIE_SYNONYMS ON SYNONYMS (SYNONYM);",
 	"CREATE INDEX CATEGORY_NAMES ON CATEGORIES (CATEGORY_NAME);",
 	"CREATE INDEX CURIE_TAXON ON CURIES (TAXON_ID);",
-	"VACUUM ANALYZE;",
+	"RESET memory_limit;",
+	"RESET threads;",
+	"ANALYZE;",
 }
 
 func generateDuckDBs() {
@@ -51,57 +56,64 @@ func generateDuckDBs() {
 	})
 	bar.AppendCompleted()
 
+	g := &errgroup.Group{}
+	g.SetLimit(parallelBuilds)
+
 	for shard := range shards {
-		s := fmt.Sprintf("%v", shard)
-		duckDBPath := fmt.Sprintf("%v/%v.duckdb", data, s)
-		shardPath := fmt.Sprintf("%v/%v", parquets, s)
+		g.Go(func() error {
+			duckDBPath := fmt.Sprintf("%v/%d.duckdb", data, shard)
+			shardPath := fmt.Sprintf("%v/%d", parquets, shard)
 
-		db, err := sql.Open("duckdb", duckDBPath)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		for _, instruction := range configuration {
-			_, err := db.Exec(instruction)
+			db, err := sql.Open("duckdb", duckDBPath)
 			if err != nil {
 				log.Fatal(err)
 			}
-		}
 
-		sourcesQuery := fmt.Sprintf("CREATE TABLE SOURCES AS SELECT * FROM read_parquet('%v/*.sources.parquet');", shardPath)
-		_, err = db.Exec(sourcesQuery)
-		if err != nil {
-			log.Fatal(err)
-		}
+			for _, instruction := range configuration {
+				_, err := db.Exec(instruction)
+				if err != nil {
+					log.Fatal(err)
+				}
+			}
 
-		categoriesQuery := fmt.Sprintf("CREATE TABLE CATEGORIES AS SELECT * FROM read_parquet('%v/*.categories.parquet') ORDER BY CATEGORY_NAME;", shardPath)
-		_, err = db.Exec(categoriesQuery)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		curiesQuery := fmt.Sprintf("CREATE TABLE CURIES AS SELECT CURIE_ID, MIN(CURIE) AS CURIE, MIN(PREFERRED_NAME) AS PREFERRED_NAME, MIN(CATEGORY_ID) AS CATEGORY_ID, MIN(TAXON_ID) AS TAXON_ID FROM read_parquet('%v/*.curies.parquet') GROUP BY CURIE_ID;", shardPath)
-		_, err = db.Exec(curiesQuery)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		synonymsQuery := fmt.Sprintf("CREATE TABLE SYNONYMS AS SELECT CURIE_ID, MIN(SOURCE_ID) AS SOURCE_ID, SYNONYM FROM read_parquet('%v/*.synonyms.parquet') GROUP BY SYNONYM, CURIE_ID;", shardPath)
-		_, err = db.Exec(synonymsQuery)
-		if err != nil {
-			log.Fatal(err)
-		}
-
-		for _, index := range indexes {
-			_, err := db.Exec(index)
+			sourcesQuery := fmt.Sprintf("CREATE TABLE SOURCES AS SELECT * FROM read_parquet('%v/*.sources.parquet');", shardPath)
+			_, err = db.Exec(sourcesQuery)
 			if err != nil {
 				log.Fatal(err)
 			}
-		}
 
-		db.Close()
-		bar.Incr()
+			categoriesQuery := fmt.Sprintf("CREATE TABLE CATEGORIES AS SELECT * FROM read_parquet('%v/*.categories.parquet') ORDER BY CATEGORY_NAME;", shardPath)
+			_, err = db.Exec(categoriesQuery)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			curiesQuery := fmt.Sprintf("CREATE TABLE CURIES AS SELECT CURIE_ID, MIN(CURIE) AS CURIE, MIN(PREFERRED_NAME) AS PREFERRED_NAME, MIN(CATEGORY_ID) AS CATEGORY_ID, MIN(TAXON_ID) AS TAXON_ID FROM read_parquet('%v/*.curies.parquet') GROUP BY CURIE_ID;", shardPath)
+			_, err = db.Exec(curiesQuery)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			synonymsQuery := fmt.Sprintf("CREATE TABLE SYNONYMS AS SELECT CURIE_ID, MIN(SOURCE_ID) AS SOURCE_ID, SYNONYM FROM read_parquet('%v/*.synonyms.parquet') GROUP BY SYNONYM, CURIE_ID;", shardPath)
+			_, err = db.Exec(synonymsQuery)
+			if err != nil {
+				log.Fatal(err)
+			}
+
+			for _, index := range indexes {
+				_, err := db.Exec(index)
+				if err != nil {
+					log.Fatal(err)
+				}
+			}
+
+			db.Close()
+			bar.Incr()
+			return nil
+		})
 	}
+
+	g.Wait()
 }
 
 type curieCounter struct {
@@ -274,6 +286,7 @@ func buildIntermediateParquets(l *lookup, maxCPUs int) {
 				taxon := uint32(taxID)
 
 				aliases := sj.Synonyms
+				aliases = append(aliases, curie)
 				aliases = qcMultipleTokens(aliases, 1)
 
 				if equiv, ok := l.Get(curieShard, h); ok {
@@ -301,8 +314,7 @@ func buildIntermediateParquets(l *lookup, maxCPUs int) {
 			hex := fmt.Sprintf("%016x", h)
 
 			for shard := range shards {
-				s := fmt.Sprintf("%v", shard)
-				shardPath := fmt.Sprintf("%v/%v", parquets, s)
+				shardPath := fmt.Sprintf("%v/%d", parquets, shard)
 
 				synonymsFile := fmt.Sprintf("%v/%v.synonyms.parquet", shardPath, hex)
 				err := parquet.WriteFile(synonymsFile, synonyms[shard])
@@ -326,8 +338,7 @@ func buildIntermediateParquets(l *lookup, maxCPUs int) {
 
 	allCategories := c.BuildSchema()
 	for shard := range shards {
-		s := fmt.Sprintf("%v", shard)
-		shardPath := fmt.Sprintf("%v/%v", parquets, s)
+		shardPath := fmt.Sprintf("%v/%d", parquets, shard)
 
 		h := xxhash.Sum64String(shardPath)
 		hex := fmt.Sprintf("%016x", h)
@@ -723,6 +734,9 @@ func initializer() {
 
 const version string = "2025sep1"
 
+// get max cpus to use for parallelism
+var maxCPUs int = runtime.NumCPU() * 9 / 10
+
 func build(cmd *cobra.Command, args []string) {
 	// enable progress bar
 	uiprogress.Start()
@@ -736,9 +750,6 @@ func build(cmd *cobra.Command, args []string) {
 		downloadBABEL(version, classEndpoints, classes, classRegex)
 		downloadBABEL(version, synonymEndpoints, synonyms, synonymRegex)
 	}
-
-	// get max cpus to use for parallelism
-	maxCPUs := runtime.NumCPU() * 9 / 10
 
 	if !useExistingParquets {
 		// build in memory lookup
