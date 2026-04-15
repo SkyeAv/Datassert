@@ -627,6 +627,12 @@ func getBABELFiles(version string, endpoints []string, dataRegex *regexp.Regexp)
 		for _, match := range matches {
 			// match[1] is just the filename instead of the whole html
 			filename := match[1]
+
+			if slices.ContainsFunc(excludePrefixes, func(p string) bool {
+				return strings.HasPrefix(filename, p)
+			}) {
+				continue
+			}
 			url := fmt.Sprintf("%v/%v", downloads, filename)
 
 			filename = filepath.Base(filename)
@@ -638,8 +644,9 @@ func getBABELFiles(version string, endpoints []string, dataRegex *regexp.Regexp)
 	return babelFiles
 }
 
-var classRegex *regexp.Regexp = regexp.MustCompile(`<a href="((?!Publication|GeneProteinConflated)[^"]*_nodes[^"]*\.gz)"`)
-var synonymRegex *regexp.Regexp = regexp.MustCompile(`<a href="((?!Publication|GeneProteinConflated)[^"]+\.gz)"`)
+var classRegex *regexp.Regexp = regexp.MustCompile(`<a href="([^"]*_nodes[^"]*\.gz)"`)
+var synonymRegex *regexp.Regexp = regexp.MustCompile(`<a href="([^"]+\.gz)"`)
+var excludePrefixes []string = []string{"Publication", "GeneProteinConflated"}
 
 var classEndpoints []string = []string{
 	"kgx/",
