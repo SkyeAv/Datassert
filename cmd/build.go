@@ -41,6 +41,7 @@ var indexes []string = []string{
 	"CREATE INDEX CATEGORY_NAMES ON CATEGORIES (CATEGORY_NAME);",
 	"CREATE INDEX CURIE_TAXON ON CURIES (TAXON_ID);",
 	"ANALYZE;",
+	"CHECKPOINT;",
 }
 
 func generateDuckDBs() {
