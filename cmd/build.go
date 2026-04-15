@@ -638,8 +638,8 @@ func getBABELFiles(version string, endpoints []string, dataRegex *regexp.Regexp)
 	return babelFiles
 }
 
-var classRegex *regexp.Regexp = regexp.MustCompile(`<a href="([^"]*_nodes[^"]*\.gz)"`)
-var synonymRegex *regexp.Regexp = regexp.MustCompile(`<a href="([^"]+\.gz)"`)
+var classRegex *regexp.Regexp = regexp.MustCompile(`<a href="((?!Publication|GeneProteinConflated)[^"]*_nodes[^"]*\.gz)"`)
+var synonymRegex *regexp.Regexp = regexp.MustCompile(`<a href="((?!Publication|GeneProteinConflated)[^"]+\.gz)"`)
 
 var classEndpoints []string = []string{
 	"kgx/",
